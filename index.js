@@ -10,12 +10,16 @@ import historyRoutes from "./routes/history.js"
 import cookieParser from "cookie-parser";
 import multer from 'multer';
 import bodyParser from 'body-parser';
+import * as dotenv from 'dotenv'
+
+
+dotenv.config();
 
 const app = express ();
 app.use(cookieParser());
 app.use (express.json())
 app.use(bodyParser.urlencoded({extended: true}));
-
+const PORT = process.env.PORT || 8000;
 
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
@@ -49,6 +53,6 @@ app.get("/test2", (res, req)=>{
 
 
 
-app.listen(8000, ()=>{
+app.listen(PORT, ()=>{
     console.log("Conneccted")
 });
