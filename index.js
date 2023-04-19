@@ -70,7 +70,7 @@ app.get("/test", (req,res)=> {
 
 app.get("/api/get", (req, res)=>{
     console.log("request submitted")
-    const sqlGet= "SELECT * FROM contact_db";
+    const sqlGet= "SELECT * FROM users";
     db.query(sqlGet, (error, result)=>{
         console.log(result);
         res.send(result)
