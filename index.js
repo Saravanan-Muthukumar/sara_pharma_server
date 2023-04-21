@@ -3,45 +3,20 @@ const dotenv = require("dotenv");
 const bodyParser = require ('body-parser');
 const cors = require ('cors');
 const mysql = require('mysql2');
-
-// const config = {
-//     db: { /* do not put password or any sensitive info here, done only for demo */
-//       host: process.env.HOST,
-//       user: process.env.USER,
-//       password: process.env.PASSWORD,
-//       database: process.env.DATABASE,
-//       waitForConnections: true,
-//       connectionLimit: 2,
-//       queueLimit: 0,
-//     },
-//   };
-
-//   const db= mysql.createPool(config.db);
+const cookieParser = require ("cookie-parser");
+const bcrypt = require ("bcryptjs");
+const jwt = require ("jsonwebtoken");
  
 const host = process.env.HOST;
 const user = process.env.USER;
 const password = process.env.PASSWORD;
 const database = process.env.DATABASE;
-// const db = mysql.createConnection({
-//     host: 'localhost',
-//     // user: process.env.USER,
-//     // password: process.env.PASSWORD,
-//     // database: process.env.DATABASE
-//     // host: "localhost",
-//     user: 'root',
-//     password: 'password',
-//     database: 'crud_contact'
-// })
+
 const db = mysql.createConnection({
     host: process.env.HOST || 'localhost',
-    // url: 'mysql://root:AEuQxhx7f9qzIMTTxjMQ@containers-us-west-179.railway.app:6179/railway',
-    // user: process.env.USER,
-    // password: process.env.PASSWORD,
-    // database: process.env.DATABASE
-    // host: "localhost",
     user: process.env.USER || 'root',
     password: process.env.PASSWORD || 'password',
-    database: process.env.DATABASE || 'crud_contact',
+    database: process.env.DATABASE || 'blog',
     port:process.env.DB_PORT || '3306'
 })
 
@@ -50,6 +25,7 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 app.use(bodyParser.urlencoded({extended: true}));
 
 const PORT = process.env.PORT ;
@@ -62,11 +38,72 @@ app.get("/", (req,res)=> {
     res.send("Hello there! Api is working well")
 })
 
-app.get("/test", (req,res)=> {
-    console.log("request submitted to test")
-    // res.send("Hello there! Test Api is working well")
-    console.log("request submitted to test")
+app.post('/register', (req, res) =>{
+
+  // CHECK EXISTING USER
+  console.log(req.body)
+  const q = "SELECT * FROM users WHERE email = ? OR username = ?";
+  db.query(q, [req.body.email, req.body.username], (err, data)=>{
+      if(err) return res.status(500).json(err);
+      if(data.length) return res.status(409).json("User already exists!");
+
+      // HASH 
+      const salt = bcrypt.genSaltSync(10);
+      const hash = bcrypt.hashSync(req.body.password, salt);
+
+      const q = "INSERT INTO users (`username`, `email`, `password`) VALUES (?);"
+      const values = [req.body.username, req.body.email, hash];
+      db.query(q, [values], (err, data)=>{
+          if(err) return res.status(500).json(err);
+          return res.status(200).json("User created!");
+      });
+  });
+});
+
+app.post('/login1', (req, res) => {
+
+    console.log("req submitted to login")
+    console.log(req.body);
+    //CHECK USER
+  
+    const q = "SELECT * FROM users WHERE username = ?";
+  
+    db.query(q, [req.body.username], (err, data) => {
+      if (err) return res.status(500).json(err);
+      if (data.length === 0) return res.status(404).json("User not found!");
+  
+      //Check password
+      const isPasswordCorrect = bcrypt.compareSync(
+        req.body.password,
+        data[0].password
+      );
+  
+      if (!isPasswordCorrect)
+        return res.status(400).json("Wrong username or password!");
+  
+      const token = jwt.sign({ id: data[0].id }, "jwtkey");
+      const { password, ...other } = data[0];
+      console.log("other is", other)
+      console.log(token);
+  
+      res
+        
+        .cookie("access_token", token, {
+          httpOnly: true,
+        })
+        .status(200)
+        .json(other);
+    });
+    
+  });
+
+app.post('/logout', (req, res) =>{
+  res.clearCookie("access_token",{
+    sameSite: "none",
+    secure: true
+  }).status(200).json("User has been logged out")
 })
+  
 
 app.get("/api/get", (req, res)=>{
     console.log("request submitted")
