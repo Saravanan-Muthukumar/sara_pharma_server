@@ -114,4 +114,59 @@ app.get("/api/get", (req, res)=>{
     })
 })
 
+app.get("/getcheques", (req, res)=>{
+  console.log("request submitted")
+  const sqlGet= "SELECT * FROM cheques_issued_for_clearance";
+  db.query(sqlGet, (error, result)=>{
+      // console.log(result);
+      res.send(result)
+  })
+})
+
+app.get ('/getcheque/:id', (req, res) =>{
+  // res.json("from controller")
+  const {id} = req.params;
+  console.log("id to get post is ", id)
+  const q = "SELECT * FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
+  db.query(q, [id], (err, data)=>{
+      if (err) return res.status(500).json(err);
+      console.log("post", data[0]);
+      return res.status(200).json(data[0]);
+  })
+})
+
+app.post("/addcheque", (req, res)=>{
+  const { chq_no, chq_date, supplier_name, chq_amnt } = req.body;
+  console.log(chq_no, chq_date, supplier_name, chq_amnt);
+  const sqlAdd = "INSERT INTO cheques_issued_for_clearance (chq_no, chq_date, supplier_name, chq_amnt) VALUES (?, ?, ?, ?)";
+  db.query(sqlAdd, [chq_no, chq_date, supplier_name, chq_amnt], (error, result)=>{
+      res.send(result);
+  })
+})
+
+app.post("/deletecheque/:id", (req, res)=>{
+  const {id} = req.params;
+  console.log(id);
+  const sqlDelete = "DELETE FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
+  db.query(sqlDelete, [id], (error, result)=>{
+      console.log(error);
+  })
+})
+
+
+
+
+app.put("/editcheque/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {chq_no, chq_date, supplier_name, chq_amnt } = req.body;
+  console.log("Data to edit", chq_no, chq_date, supplier_name, chq_amnt)
+  const sqlGet= "UPDATE cheques_issued_for_clearance SET chq_no=?, chq_date=?, supplier_name=?, chq_amnt=? WHERE chq_issue_id = ?";
+  db.query(sqlGet, [chq_no, chq_date, supplier_name, chq_amnt, id], (error, result)=>{
+      if (error) {
+          console.log(error)
+      }
+      res.send(result)
+  });
+})
+
 app.listen(PORT, () => console.log(`Sever is runninggg port ${PORT} ...`));
