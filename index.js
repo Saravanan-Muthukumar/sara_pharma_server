@@ -118,13 +118,11 @@ app.get("/getcheques", (req, res)=>{
   console.log("request submitted")
   const sqlGet= "SELECT * FROM cheques_issued_for_clearance";
   db.query(sqlGet, (error, result)=>{
-      // console.log(result);
       res.send(result)
   })
 })
 
 app.get ('/getcheque/:id', (req, res) =>{
-  // res.json("from controller")
   const {id} = req.params;
   console.log("id to get post is ", id)
   const q = "SELECT * FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
@@ -153,9 +151,6 @@ app.post("/deletecheque/:id", (req, res)=>{
   })
 })
 
-
-
-
 app.put("/editcheque/:id", (req, res)=>{
   const { id } = req.params;
   const  {chq_no, chq_date, supplier_name, chq_amnt } = req.body;
@@ -167,6 +162,42 @@ app.put("/editcheque/:id", (req, res)=>{
       }
       res.send(result)
   });
+})
+
+app.get("/getpurchaseissues", (req, res)=>{
+  const sqlGet= "SELECT * FROM purchase_issues";
+  db.query(sqlGet, (error, result)=>{
+      res.send(result)
+  })
+})
+
+app.post("/addpurchaseissue", (req, res)=>{
+  const { recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to } = req.body;
+  const sqlAdd = "INSERT INTO purchase_issues (recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+  db.query(sqlAdd, [recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to], (error, result)=>{
+      if (error) {
+        console.log(error)
+    }
+      res.send(result);
+  })
+})
+
+app.post("/addcomment", (req, res)=>{
+  const { comment, recorded_by, recorded_date, issue_id } = req.body;
+  const sqlAdd = "INSERT INTO comments (comment, recorded_by, recorded_date, issue_id) VALUES (?, ?, ?, ?)";
+  db.query(sqlAdd, [comment, recorded_by, recorded_date, issue_id], (error, result)=>{
+      res.send(result);
+  })
+})
+
+app.get("/getcomments/:pur_issue_id", (req, res)=>{
+  const sqlGet= "SELECT * FROM comments WHERE issue_id=?";
+  db.query(sqlGet, [req.params.pur_issue_id], (error, result)=>{
+    if (error) {
+      console.log(error)
+  }
+    res.send(result);
+})
 })
 
 app.listen(PORT, () => console.log(`Sever is runninggg port ${PORT} ...`));
