@@ -200,4 +200,14 @@ app.get("/getcomments/:pur_issue_id", (req, res)=>{
 })
 })
 
+app.get("/deleteissue/:id", (req, res)=>{
+  const {id} = req.params;
+  // const id = 2;
+  console.log("id to delete", id);
+  const sqlDelete = "DELETE FROM purchase_issues WHERE pur_issue_id=?";
+  db.query(sqlDelete, [id], (error, result)=>{
+      console.log(error);
+  })
+})
+
 app.listen(PORT, () => console.log(`Sever is runninggg port ${PORT} ...`));
