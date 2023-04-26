@@ -210,4 +210,111 @@ app.get("/deleteissue/:id", (req, res)=>{
   })
 })
 
+app.get("/getpurchaseissues/:id", (req, res)=>{
+  const {id} = req.params;
+  console.log("id to get purchase issue", id);
+  const sqlGet= "SELECT * FROM purchase_issues WHERE pur_issue_id=?";
+  db.query(sqlGet, [id], (err, data)=>{
+    if (err) return res.status(500).json(err);
+    console.log("post", data[0]);
+    return res.status(200).json(data[0]);
+  })
+})
+
+app.get ('/getcheque/:id', (req, res) =>{
+  const {id} = req.params;
+  console.log("id to get post is ", id)
+  const q = "SELECT * FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
+  db.query(q, [id], (err, data)=>{
+      if (err) return res.status(500).json(err);
+      console.log("post", data[0]);
+      return res.status(200).json(data[0]);
+  })
+})
+
+app.put("/editpurchaseissue/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to} = req.body;
+  console.log("Data to edit", recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to)
+  const sqlGet= "UPDATE purchase_issues SET recorded_by=?, date_recorded=?, supplier_name=?, product_name=?, qty=?, issue=?, status=?, description=?, assigned_to=? WHERE pur_issue_id = ?";
+  db.query(sqlGet, [recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to, id], (err, data)=>{
+    if (err) return res.status(500).json(err);
+    console.log("post", data[0]);
+    return res.status(200).json(data[0]);
+  });
+})
+
+app.get("/getcollections", (req, res)=>{
+  const sqlGet= "SELECT * FROM collection";
+  db.query(sqlGet, (error, result)=>{
+      res.send(result)
+  })
+})
+
+app.post("/addcollection", (req, res)=>{
+  const { recorded_by, date_recorded, customer_name, followup_date, status } = req.body;
+  const sqlAdd = "INSERT INTO collection (recorded_by, date_recorded, customer_name, followup_date, status) VALUES (?, ?, ?, ?, ?)";
+  db.query(sqlAdd, [recorded_by, date_recorded, customer_name, followup_date, status], (error, result)=>{
+    if (error) {
+      console.log(error)
+  }
+    res.send(result);
+})
+})
+
+app.get("/deletecollection/:id", (req, res)=>{
+  const {id} = req.params;
+  // const id = 2;
+  console.log("id to delete", id);
+  const sqlDelete = "DELETE FROM collection WHERE col_id=?";
+  db.query(sqlDelete, [id], (error, result)=>{
+      console.log(error);
+  })
+})
+
+app.get ('/getcollection/:id', (req, res) =>{
+  const {id} = req.params;
+  console.log("id to get collection is ", id)
+  const q = "SELECT * FROM collection WHERE col_id=?";
+  db.query(q, [id], (err, data)=>{
+      if (err) return res.status(500).json(err);
+      console.log("collection", data[0]);
+      return res.status(200).json(data[0]);
+  })
+})
+
+app.put("/editcollection/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {recorded_by, date_recorded, customer_name, followup_date, status} = req.body;
+  console.log("Data to edit", recorded_by, date_recorded, customer_name, followup_date, status, id)
+  const sqlGet= "UPDATE collection SET recorded_by=?, date_recorded=?, customer_name=?, followup_date=?, status=? WHERE col_id = ?";
+  db.query(sqlGet, [recorded_by, date_recorded, customer_name, followup_date, status, id], (err, data)=>{
+    if (err) return res.status(500).json(err);
+    console.log("post", data[0]);
+    return res.status(200).json(data[0]);
+  });
+})
+
+app.post("/addcollectioncomment", (req, res)=>{
+  const { comment, recorded_by, recorded_date, col_id } = req.body;
+  const sqlAdd = "INSERT INTO collection_comment (comment, recorded_by, recorded_date, col_id) VALUES (?, ?, ?, ?)";
+  db.query(sqlAdd, [comment, recorded_by, recorded_date, col_id], (error, result)=>{
+    if (error) {
+      console.log(error)
+  }
+    res.send(result);
+})
+})
+
+
+app.get("/getcollectioncomments/:pur_issue_id", (req, res)=>{
+  const sqlGet= "SELECT * FROM collection_comment WHERE col_id=?";
+  db.query(sqlGet, [req.params.pur_issue_id], (error, result)=>{
+    if (error) {
+      console.log(error)
+  }
+    res.send(result);
+})
+})
+
 app.listen(PORT, () => console.log(`Sever is runninggg port ${PORT} ...`));
