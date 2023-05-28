@@ -294,6 +294,28 @@ app.put("/editcollection/:id", (req, res)=>{
     return res.status(200).json(data[0]);
   });
 })
+app.put("/editcollectionFollowUp/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {followup_date} = req.body;
+  console.log("Data to editFollowup", followup_date, id)
+  const sqlGet= "UPDATE collection SET followup_date=? WHERE col_id = ?";
+  db.query(sqlGet, [followup_date, id], (err, data)=>{
+    if (err) return res.status(500).json(err);
+    console.log("post", data[0]);
+    return res.status(200).json(data[0]);
+  });
+})
+app.put("/editcollectionStatus/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {status} = req.body;
+  console.log("Data to editFollowup", status, id)
+  const sqlGet= "UPDATE collection SET status=? WHERE col_id = ?";
+  db.query(sqlGet, [status, id], (err, data)=>{
+    if (err) return res.status(500).json(err);
+    console.log("post", data[0]);
+    return res.status(200).json(data[0]);
+  });
+})
 
 app.post("/addcollectioncomment", (req, res)=>{
   const { comment, recorded_by, recorded_date, col_id } = req.body;
