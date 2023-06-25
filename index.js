@@ -45,7 +45,7 @@ app.post('/register', (req, res) =>{
   const q = "SELECT * FROM users WHERE email = ? OR username = ?";
   db.query(q, [req.body.email, req.body.username], (err, data)=>{
       if(err) return res.status(500).json(err);
-      if(data.length) return res.status(409).json("User already exists!");
+      if(data.length) return res.status(409).json("User already existss!");
 
       // HASH 
       const salt = bcrypt.genSaltSync(10);
