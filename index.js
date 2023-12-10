@@ -35,7 +35,7 @@ console.log(process.env.PASSWORD)
 console.log(process.env.DATABASE)
 
 app.get("/", (req,res)=> {
-    res.send("Hello there! Api is working well")
+    res.send("Hello there! Api is working well1")
 })
 
 app.post('/register', (req, res) =>{
@@ -162,6 +162,14 @@ app.put("/editcheque/:id", (req, res)=>{
       }
       res.send(result)
   });
+})
+
+app.get("/getrepadjustments", (req, res)=>{
+  console.log("request submitted")
+  const sqlGet= "SELECT * FROM rep_adjustment";
+  db.query(sqlGet, (error, result)=>{
+      res.send(result)
+  })
 })
 
 app.get("/getpurchaseissues", (req, res)=>{
