@@ -119,6 +119,7 @@ app.get("/getcheques", (req, res)=>{
   const sqlGet= "SELECT * FROM cheques_issued_for_clearance";
   db.query(sqlGet, (error, result)=>{
       res.send(result)
+      console.log(result)
   })
 })
 
