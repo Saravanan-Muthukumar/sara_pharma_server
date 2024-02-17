@@ -6,18 +6,27 @@ const mysql = require('mysql2');
 const cookieParser = require ("cookie-parser");
 const bcrypt = require ("bcryptjs");
 const jwt = require ("jsonwebtoken");
+const multer = require('multer');
  
 const host = process.env.HOST;
 const user = process.env.USER;
 const password = process.env.PASSWORD;
 const database = process.env.DATABASE;
 
+// const db = mysql.createConnection({
+//     host: process.env.HOST || 'sara-pharma-do-user-15769670-0.c.db.ondigitalocean.com',
+//     user: process.env.USER || 'doadmin1',
+//     password: process.env.PASSWORD || 'AVNS_S5lEfEbPAYykuTUXOdE',
+//     database: process.env.DATABASE || 'sara_pharma',
+//     port:process.env.DB_PORT || '25060'
+// })
+
 const db = mysql.createConnection({
-    host: process.env.HOST || 'localhost',
-    user: process.env.USER || 'root',
-    password: process.env.PASSWORD || 'password',
-    database: process.env.DATABASE || 'blog',
-    port:process.env.DB_PORT || '3306'
+    host: process.env.HOST,
+    user: process.env.USER,
+    password: process.env.PASSWORD,
+    database: process.env.DATABASE,
+    port: process.env.DB_PORT
 })
 
 dotenv.config();
@@ -349,5 +358,54 @@ app.get("/getcollectioncomments/:pur_issue_id", (req, res)=>{
     res.send(result);
 })
 })
+
+const storage = multer.diskStorage({
+  destination: function(req, file, cb) {
+    return cb(null, "../grocery_client/src/upload")
+  },
+  filename: function (req, file, cb) {
+    return cb(null, `${Date.now()}_${file.originalname}`)
+  }
+})
+
+const upload = multer({storage})
+
+app.post('/upload', upload.single('file'), (req, res) => {
+  console.log(req.body)
+  console.log(req.file)
+  console.log(req.file.filename)
+  const file = req.file;
+  res.send(file)
+})
+
+app.get("/categories", (req, res)=>{
+  const query = "SELECT * FROM category";
+
+  db.query(query, (error, result)=>{
+      console.log(result);
+      res.send(result)
+  })
+})
+app.get("/products", (req, res)=>{
+  console.log("Req received to fetch products")
+  const query = "SELECT * FROM grocery_products";
+
+  db.query(query, (error, result)=>{
+      console.log(result);
+      res.send(result)
+  })
+})
+
+app.post('/addproduct', (req, res)=>{
+console.log(req.body)
+const query = "INSERT INTO products (product_name, product_desc, product_packing, brand, sale_rate, category, image) VALUES(?,?,?,?,?,?,?)";
+db.query(query, [req.body.productName, req.body.productDesc, req.body.productPacking, req.body.productBrand, req.body.productSaleRate, req.body.productCategory, req.body.img], (error, result)=>{
+ if (error) {
+  console.log(error)
+ }
+  res.send(result)
+})
+})
+
 
 app.listen(PORT, () => console.log(`Sever is runninggg port ${PORT} ...`));
