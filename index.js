@@ -13,21 +13,21 @@ const user = process.env.USER;
 const password = process.env.PASSWORD;
 const database = process.env.DATABASE;
 
-// const db = mysql.createConnection({
-//     host: process.env.HOST || 'sara-pharma-do-user-15769670-0.c.db.ondigitalocean.com',
-//     user: process.env.USER || 'doadmin1',
-//     password: process.env.PASSWORD || 'AVNS_S5lEfEbPAYykuTUXOdE',
-//     database: process.env.DATABASE || 'sara_pharma',
-//     port:process.env.DB_PORT || '25060'
-// })
-
 const db = mysql.createConnection({
-    host: process.env.HOST,
-    user: process.env.USER,
-    password: process.env.PASSWORD,
-    database: process.env.DATABASE,
-    port: process.env.DB_PORT
+    host: process.env.HOST || 'sara-pharma-do-user-15769670-0.c.db.ondigitalocean.com',
+    user: process.env.USER || 'doadmin1',
+    password: process.env.PASSWORD || 'AVNS_S5lEfEbPAYykuTUXOdE',
+    database: process.env.DATABASE || 'sara_pharma',
+    port:process.env.DB_PORT || '25060'
 })
+
+// const db = mysql.createConnection({
+//     host: process.env.HOST,
+//     user: process.env.USER,
+//     password: process.env.PASSWORD,
+//     database: process.env.DATABASE,
+//     port: process.env.DB_PORT
+// })
 
 dotenv.config();
 
@@ -379,7 +379,7 @@ app.post('/upload', upload.single('file'), (req, res) => {
 })
 
 app.get("/categories", (req, res)=>{
-  const query = "SELECT * FROM category";
+  const query = "SELECT * FROM grocery_category";
 
   db.query(query, (error, result)=>{
       console.log(result);
@@ -405,6 +405,71 @@ db.query(query, [req.body.productName, req.body.productDesc, req.body.productPac
  }
   res.send(result)
 })
+})
+
+app.get("/stationaries", (req, res)=>{
+  console.log("Req received to fetch products")
+  const query = "SELECT * FROM stationary";
+
+  db.query(query, (error, result)=>{
+      console.log(result);
+      res.send(result)
+  })
+})
+
+app.get ('/stationary/:id', (req, res) =>{
+  const {id} = req.params;
+  console.log("id to get stationary is ", id)
+  const q = "SELECT * FROM stationary WHERE stationary_id=?";
+  db.query(q, [id], (err, data)=>{
+      if (err) return res.status(500).json(err);
+      console.log("post", data[0]);
+      return res.status(200).json(data[0]);
+  })
+})
+
+app.post("/addstationary", (req, res)=>{
+  const { invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name } = req.body;
+  console.log(invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name);
+  const sqlAdd = "INSERT INTO stationary (invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name) VALUES (?, ?, ?, ?, ?)";
+  db.query(sqlAdd, [invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name], (error, result)=>{
+      res.send(result);
+  })
+})
+
+app.post("/deletestationary/:id", (req, res)=>{
+  const {id} = req.params;
+  // const id = 2;
+  console.log("id to delete", id);
+  const sqlDelete = "DELETE FROM stationary WHERE stationary_id=?";
+  db.query(sqlDelete, [id], (error, result)=>{
+      console.log(error);
+  })
+})
+
+app.put("/editstationary/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name } = req.body;
+  console.log("Data to edit", invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name)
+  const sqlGet= "UPDATE stationary SET invoice_number=?, invoice_date=?, supplier_name=?, invoice_amnt=?, stationary_name=? WHERE stationary_id = ?";
+  db.query(sqlGet, [invoice_number, invoice_date, supplier_name, invoice_amnt, stationary_name, id], (error, result)=>{
+      if (error) {
+          console.log(error)
+      }
+      res.send(result)
+  });
+})
+app.put("/editstationarypaid/:id", (req, res)=>{
+  const { id } = req.params;
+  const  {date_paid } = req.body;
+  console.log("Data to edit date", date_paid)
+  const sqlGet= "UPDATE stationary SET date_paid=? WHERE stationary_id = ?";
+  db.query(sqlGet, [date_paid, id], (error, result)=>{
+      if (error) {
+          console.log(error)
+      }
+      res.send(result)
+  });
 })
 
 
