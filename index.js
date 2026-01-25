@@ -154,6 +154,47 @@ app.post("/packing/save", (req, res) => {
     return (allowedTransitions[fromStatus] || []).includes(toStatus);
   };
 
+  // ✅ Build friendly message for duplicate invoice_number
+  const duplicateMessageFor = (row) => {
+    const takenBy = String(row?.taken_by || "staff").trim();
+    const packedBy = String(row?.packed_by || "staff").trim();
+    const st = String(row?.status || "").trim();
+
+    if (st === "TAKING_IN_PROGRESS") {
+      return `Stock already taken by ${takenBy} and in taking progress`;
+    }
+    if (st === "TAKING_DONE") {
+      return `Stock already taken by ${takenBy} and waiting for verification`;
+    }
+    if (st === "VERIFY_IN_PROGRESS") {
+      return "Verify in progress";
+    }
+    if (st === "COMPLETED") {
+      return `Invoice number already packed by ${packedBy}`;
+    }
+    return "Invoice already exists";
+  };
+
+  const respondDuplicate = (invNo) => {
+    const inv = String(invNo || "").trim();
+    if (!inv) return res.status(409).json({ message: "Invoice already exists" });
+
+    db.query(
+      "SELECT invoice_id, invoice_number, status, taken_by, packed_by FROM packing WHERE invoice_number = ? LIMIT 1",
+      [inv],
+      (e, rows) => {
+        if (e) return res.status(409).json({ message: "Invoice already exists" });
+        const ex = rows?.[0];
+        if (!ex) return res.status(409).json({ message: "Invoice already exists" });
+
+        return res.status(409).json({
+          message: duplicateMessageFor(ex),
+          existing: ex, // optional (useful for debugging)
+        });
+      }
+    );
+  };
+
   // =========================
   // CREATE (no invoice_id)
   // =========================
@@ -200,8 +241,10 @@ app.post("/packing/save", (req, res) => {
       ],
       (insertError, insertResult) => {
         if (insertError) {
-          if (insertError.code === "ER_DUP_ENTRY")
-            return res.status(409).json("Invoice already exists");
+          if (insertError.code === "ER_DUP_ENTRY") {
+            // ✅ return friendly message instead of plain "Invoice already exists"
+            return respondDuplicate(invoice_number);
+          }
           return res.status(500).json(insertError);
         }
 
@@ -282,8 +325,10 @@ app.post("/packing/save", (req, res) => {
           ],
           (updateError) => {
             if (updateError) {
-              if (updateError.code === "ER_DUP_ENTRY")
-                return res.status(409).json("Invoice number already exists");
+              if (updateError.code === "ER_DUP_ENTRY") {
+                // ✅ friendly duplicate message on edit as well
+                return respondDuplicate(invoice_number);
+              }
               return res.status(500).json(updateError);
             }
 
@@ -292,9 +337,7 @@ app.post("/packing/save", (req, res) => {
               [invoice_id],
               (selectError, updatedRows) => {
                 if (selectError) return res.status(500).json(selectError);
-                return res
-                  .status(200)
-                  .json({ action: "updated", data: updatedRows[0] });
+                return res.status(200).json({ action: "updated", data: updatedRows[0] });
               }
             );
           }
@@ -311,7 +354,6 @@ app.post("/packing/save", (req, res) => {
       if (nextStatus === "TAKING_DONE") {
         const safeTakenBy = toTrimOrNull(taken_by);
 
-        // IMPORTANT FIX:
         // Prefer provided taken_by (if non-blank), otherwise keep existing.
         const updateSql = `
           UPDATE packing
@@ -334,9 +376,10 @@ app.post("/packing/save", (req, res) => {
             [invoice_id],
             (selectError, updatedRows) => {
               if (selectError) return res.status(500).json(selectError);
-              return res
-                .status(200)
-                .json({ action: "taking_completed", data: updatedRows[0] });
+              return res.status(200).json({
+                action: "taking_completed",
+                data: updatedRows[0],
+              });
             }
           );
         });
@@ -367,9 +410,10 @@ app.post("/packing/save", (req, res) => {
             [invoice_id],
             (selectError, updatedRows) => {
               if (selectError) return res.status(500).json(selectError);
-              return res
-                .status(200)
-                .json({ action: "verify_started", data: updatedRows[0] });
+              return res.status(200).json({
+                action: "verify_started",
+                data: updatedRows[0],
+              });
             }
           );
         });
@@ -396,9 +440,10 @@ app.post("/packing/save", (req, res) => {
             [invoice_id],
             (selectError, updatedRows) => {
               if (selectError) return res.status(500).json(selectError);
-              return res
-                .status(200)
-                .json({ action: "packing_completed", data: updatedRows[0] });
+              return res.status(200).json({
+                action: "packing_completed",
+                data: updatedRows[0],
+              });
             }
           );
         });
