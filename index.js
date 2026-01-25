@@ -125,151 +125,308 @@ app.get("/api/get", (req, res)=>{
 
 app.post("/packing/save", (req, res) => {
   const {
-    invoice_id, // if present => update
+    invoice_id,
     invoice_number,
     no_of_products,
     invoice_value,
     customer_name,
     courier_name,
-    staff_name,
     status,
+    taken_by,
+    packed_by,
   } = req.body;
 
-  const isBlank = (v) => v === undefined || v === null || String(v).trim() === "";
+  const isBlank = (value) =>
+    value === undefined || value === null || String(value).trim() === "";
 
-  // --------------------
-  // UPDATE (invoice_id present)
-  // --------------------
-  if (invoice_id) {
-    // block clearing required fields with empty string
+  const toTrimOrNull = (value) => (isBlank(value) ? null : String(value).trim());
+
+  const canTransition = (fromStatus, toStatus) => {
+    if (!toStatus || fromStatus === toStatus) return true;
+
+    const allowedTransitions = {
+      TAKING_IN_PROGRESS: ["TAKING_DONE"],
+      TAKING_DONE: ["VERIFY_IN_PROGRESS"],
+      VERIFY_IN_PROGRESS: ["COMPLETED"],
+      COMPLETED: [],
+    };
+
+    return (allowedTransitions[fromStatus] || []).includes(toStatus);
+  };
+
+  // =========================
+  // CREATE (no invoice_id)
+  // =========================
+  if (!invoice_id) {
     if (
-      (invoice_number !== undefined && isBlank(invoice_number)) ||
-      (no_of_products !== undefined && isBlank(no_of_products)) ||
-      (customer_name !== undefined && isBlank(customer_name)) ||
-      (courier_name !== undefined && isBlank(courier_name)) ||
-      (staff_name !== undefined && isBlank(staff_name)) ||
-      (status !== undefined && isBlank(status))
+      isBlank(invoice_number) ||
+      isBlank(no_of_products) ||
+      isBlank(customer_name) ||
+      isBlank(courier_name) ||
+      isBlank(taken_by)
     ) {
-      return res.status(400).json("Required fields cannot be empty");
+      return res
+        .status(400)
+        .json(
+          "invoice_number, no_of_products, customer_name, courier_name, taken_by are required"
+        );
     }
 
-    const q = `
-      UPDATE packing
-      SET
-        invoice_number = COALESCE(?, invoice_number),
-        no_of_products = COALESCE(?, no_of_products),
-        invoice_value  = ?,
-        customer_name  = COALESCE(?, customer_name),
-        courier_name   = COALESCE(?, courier_name),
-        staff_name     = COALESCE(?, staff_name),
-        status         = COALESCE(?, status)
-      WHERE invoice_id = ?
+    const finalStatus =
+      status && !isBlank(status) ? String(status).trim() : "TAKING_IN_PROGRESS";
+
+    const insertSql = `
+      INSERT INTO packing
+        (invoice_number, no_of_products, invoice_value, customer_name, courier_name,
+         status, taken_by, take_started_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
     `;
 
-    // invoice_value: if omitted => keep old, if "" => set NULL, else set number
-    // We handle this by first reading current row only when invoice_value is undefined
-    db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (e0, rows0) => {
-      if (e0) return res.status(500).json(e0);
-      if (!rows0.length) return res.status(404).json("Invoice not found");
+    const finalInvoiceValue =
+      invoice_value === "" || invoice_value === undefined || invoice_value === null
+        ? null
+        : Number(invoice_value);
 
-      const current = rows0[0];
-      const finalInvoiceValue =
-        invoice_value === undefined
-          ? current.invoice_value
-          : invoice_value === "" || invoice_value === null
-          ? null
-          : Number(invoice_value);
-
-      db.query(
-        q,
-        [
-          invoice_number !== undefined ? invoice_number.trim() : null,
-          no_of_products !== undefined ? Number(no_of_products) : null,
-          finalInvoiceValue,
-          customer_name !== undefined ? customer_name.trim() : null,
-          courier_name !== undefined ? courier_name.trim() : null,
-          staff_name !== undefined ? staff_name.trim() : null,
-          status !== undefined ? status.trim() : null,
-          invoice_id,
-        ],
-        (err) => {
-          if (err) {
-            if (err.code === "ER_DUP_ENTRY")
-              return res.status(409).json("Invoice number already exists");
-            return res.status(500).json(err);
-          }
-
-          db.query(
-            "SELECT * FROM packing WHERE invoice_id = ?",
-            [invoice_id],
-            (e2, rows2) => {
-              if (e2) return res.status(500).json(e2);
-              return res.status(200).json({ action: "updated", data: rows2[0] });
-            }
-          );
+    db.query(
+      insertSql,
+      [
+        String(invoice_number).trim(),
+        Number(no_of_products),
+        finalInvoiceValue,
+        String(customer_name).trim(),
+        String(courier_name).trim(),
+        finalStatus,
+        String(taken_by).trim(),
+      ],
+      (insertError, insertResult) => {
+        if (insertError) {
+          if (insertError.code === "ER_DUP_ENTRY")
+            return res.status(409).json("Invoice already exists");
+          return res.status(500).json(insertError);
         }
-      );
-    });
+
+        db.query(
+          "SELECT * FROM packing WHERE invoice_id = ?",
+          [insertResult.insertId],
+          (selectError, rows) => {
+            if (selectError) return res.status(500).json(selectError);
+            return res.status(200).json({ action: "created", data: rows[0] });
+          }
+        );
+      }
+    );
 
     return;
   }
 
-  // --------------------
-  // CREATE (no invoice_id)
-  // --------------------
-  if (
-    isBlank(invoice_number) ||
-    isBlank(no_of_products) ||
-    isBlank(customer_name) ||
-    isBlank(courier_name) ||
-    isBlank(staff_name)
-  ) {
-    return res
-      .status(400)
-      .json(
-        "invoice_number, no_of_products, customer_name, courier_name, staff_name are required"
-      );
-  }
-
-  const insertQ = `
-    INSERT INTO packing
-      (invoice_number, no_of_products, invoice_value, customer_name, courier_name, staff_name, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `;
-
+  // =========================
+  // UPDATE / TRANSITIONS
+  // =========================
   db.query(
-    insertQ,
-    [
-      invoice_number.trim(),
-      Number(no_of_products),
-      invoice_value === "" || invoice_value === undefined || invoice_value === null
-        ? null
-        : Number(invoice_value),
-      customer_name.trim(),
-      courier_name.trim(),
-      staff_name.trim(),
-      status && !isBlank(status) ? status.trim() : "TAKING_IN_PROGRESS",
-    ],
-    (err, result) => {
-      if (err) {
-        if (err.code === "ER_DUP_ENTRY") return res.status(409).json("Invoice already exists");
-        return res.status(500).json(err);
+    "SELECT * FROM packing WHERE invoice_id = ?",
+    [invoice_id],
+    (readError, rows) => {
+      if (readError) return res.status(500).json(readError);
+      if (!rows.length) return res.status(404).json("Invoice not found");
+
+      const currentRow = rows[0];
+
+      // status can be omitted for edit-only requests
+      const nextStatus =
+        status === undefined || isBlank(status)
+          ? currentRow.status
+          : String(status).trim();
+
+      if (status !== undefined && !canTransition(currentRow.status, nextStatus)) {
+        return res
+          .status(400)
+          .json(`Invalid status transition: ${currentRow.status} -> ${nextStatus}`);
       }
 
-      db.query(
-        "SELECT * FROM packing WHERE invoice_id = ?",
-        [result.insertId],
-        (e2, rows2) => {
-          if (e2) return res.status(500).json(e2);
-          return res.status(200).json({ action: "created", data: rows2[0] });
-        }
-      );
+      // -------------------------
+      // EDIT (no status provided)
+      // -------------------------
+      if (status === undefined) {
+        const updateSql = `
+          UPDATE packing
+          SET
+            invoice_number = COALESCE(?, invoice_number),
+            no_of_products = COALESCE(?, no_of_products),
+            invoice_value  = ?,
+            customer_name  = COALESCE(?, customer_name),
+            courier_name   = COALESCE(?, courier_name),
+            taken_by       = COALESCE(?, taken_by),
+            updated_at     = NOW()
+          WHERE invoice_id = ?
+        `;
+
+        const finalInvoiceValue =
+          invoice_value === undefined
+            ? currentRow.invoice_value
+            : invoice_value === "" || invoice_value === null
+            ? null
+            : Number(invoice_value);
+
+        const safeTakenBy = toTrimOrNull(taken_by);
+
+        db.query(
+          updateSql,
+          [
+            invoice_number !== undefined ? String(invoice_number).trim() : null,
+            no_of_products !== undefined ? Number(no_of_products) : null,
+            finalInvoiceValue,
+            customer_name !== undefined ? String(customer_name).trim() : null,
+            courier_name !== undefined ? String(courier_name).trim() : null,
+            safeTakenBy,
+            invoice_id,
+          ],
+          (updateError) => {
+            if (updateError) {
+              if (updateError.code === "ER_DUP_ENTRY")
+                return res.status(409).json("Invoice number already exists");
+              return res.status(500).json(updateError);
+            }
+
+            db.query(
+              "SELECT * FROM packing WHERE invoice_id = ?",
+              [invoice_id],
+              (selectError, updatedRows) => {
+                if (selectError) return res.status(500).json(selectError);
+                return res
+                  .status(200)
+                  .json({ action: "updated", data: updatedRows[0] });
+              }
+            );
+          }
+        );
+
+        return;
+      }
+
+      // -------------------------
+      // TRANSITIONS
+      // -------------------------
+
+      // ✅ TAKING_IN_PROGRESS -> TAKING_DONE
+      if (nextStatus === "TAKING_DONE") {
+        const safeTakenBy = toTrimOrNull(taken_by);
+
+        // IMPORTANT FIX:
+        // Prefer provided taken_by (if non-blank), otherwise keep existing.
+        const updateSql = `
+          UPDATE packing
+          SET
+            status = 'TAKING_DONE',
+            taken_by = CASE
+              WHEN ? IS NULL THEN taken_by
+              ELSE ?
+            END,
+            take_completed_at = NOW(),
+            updated_at = NOW()
+          WHERE invoice_id = ?
+        `;
+
+        db.query(updateSql, [safeTakenBy, safeTakenBy, invoice_id], (updateError) => {
+          if (updateError) return res.status(500).json(updateError);
+
+          db.query(
+            "SELECT * FROM packing WHERE invoice_id = ?",
+            [invoice_id],
+            (selectError, updatedRows) => {
+              if (selectError) return res.status(500).json(selectError);
+              return res
+                .status(200)
+                .json({ action: "taking_completed", data: updatedRows[0] });
+            }
+          );
+        });
+
+        return;
+      }
+
+      // ✅ TAKING_DONE -> VERIFY_IN_PROGRESS
+      if (nextStatus === "VERIFY_IN_PROGRESS") {
+        const safePackedBy = toTrimOrNull(packed_by);
+        if (!safePackedBy) return res.status(400).json("packed_by is required");
+
+        const updateSql = `
+          UPDATE packing
+          SET
+            status = 'VERIFY_IN_PROGRESS',
+            packed_by = ?,
+            verify_started_at = NOW(),
+            updated_at = NOW()
+          WHERE invoice_id = ?
+        `;
+
+        db.query(updateSql, [safePackedBy, invoice_id], (updateError) => {
+          if (updateError) return res.status(500).json(updateError);
+
+          db.query(
+            "SELECT * FROM packing WHERE invoice_id = ?",
+            [invoice_id],
+            (selectError, updatedRows) => {
+              if (selectError) return res.status(500).json(selectError);
+              return res
+                .status(200)
+                .json({ action: "verify_started", data: updatedRows[0] });
+            }
+          );
+        });
+
+        return;
+      }
+
+      // ✅ VERIFY_IN_PROGRESS -> COMPLETED
+      if (nextStatus === "COMPLETED") {
+        const updateSql = `
+          UPDATE packing
+          SET
+            status = 'COMPLETED',
+            pack_completed_at = NOW(),
+            updated_at = NOW()
+          WHERE invoice_id = ?
+        `;
+
+        db.query(updateSql, [invoice_id], (updateError) => {
+          if (updateError) return res.status(500).json(updateError);
+
+          db.query(
+            "SELECT * FROM packing WHERE invoice_id = ?",
+            [invoice_id],
+            (selectError, updatedRows) => {
+              if (selectError) return res.status(500).json(selectError);
+              return res
+                .status(200)
+                .json({ action: "packing_completed", data: updatedRows[0] });
+            }
+          );
+        });
+
+        return;
+      }
+
+      return res.status(400).json("Unsupported status update");
     }
   );
 });
 
 app.get("/packing", (req, res) => {
-  db.query("SELECT * FROM packing ORDER BY created_at DESC", (err, rows) => {
+  const { date } = req.query;
+
+  const qBase = "SELECT * FROM packing";
+  const qOrder = " ORDER BY created_at DESC";
+
+  if (date) {
+    const q = `${qBase} WHERE DATE(created_at) = ? ${qOrder}`;
+    db.query(q, [date], (err, rows) => {
+      if (err) return res.status(500).json(err);
+      return res.status(200).json(rows);
+    });
+    return;
+  }
+
+  db.query(`${qBase} ${qOrder}`, (err, rows) => {
     if (err) return res.status(500).json(err);
     return res.status(200).json(rows);
   });
@@ -285,6 +442,8 @@ app.get("/getcheques", (req, res)=>{
       
   })
 })
+
+
 
 app.get ('/getcheque/:id', (req, res) =>{
   const {id} = req.params;
