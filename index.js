@@ -123,429 +123,351 @@ app.get("/api/get", (req, res)=>{
     })
 })
 
-app.post("/packing/save", (req, res) => {
-  const {
-    invoice_id,
-    invoice_number,
-    no_of_products,
-    invoice_value,
-    customer_name,
-    courier_name,
-    status,
-    taken_by,
-    packed_by,
-  } = req.body;
+// ==============================
+// NEW PACKING API (NEW STATUSES)
+// Add this BELOW app.use(...) and ABOVE app.listen(...)
+// ==============================
 
-  const isBlank = (value) =>
-    value === undefined || value === null || String(value).trim() === "";
+const STATUSES = ["TO_TAKE", "TAKING", "TO_VERIFY", "VERIFYING", "PACKED"];
 
-  const toTrimOrNull = (value) => (isBlank(value) ? null : String(value).trim());
+const isBlank = (v) => v === undefined || v === null || String(v).trim() === "";
+const clean = (v) => (isBlank(v) ? "" : String(v).trim());
 
-  const canTransition = (fromStatus, toStatus) => {
-    if (!toStatus || fromStatus === toStatus) return true;
-
-    const allowedTransitions = {
-      TAKING_IN_PROGRESS: ["TAKING_DONE"],
-      TAKING_DONE: ["VERIFY_IN_PROGRESS"],
-      VERIFY_IN_PROGRESS: ["COMPLETED"],
-      COMPLETED: [],
-    };
-
-    return (allowedTransitions[fromStatus] || []).includes(toStatus);
+const canTransition = (fromStatus, toStatus) => {
+  const allowed = {
+    TO_TAKE: ["TAKING"],
+    TAKING: ["TO_VERIFY"],
+    TO_VERIFY: ["VERIFYING"],
+    VERIFYING: ["PACKED"],
+    PACKED: [],
   };
+  return (allowed[fromStatus] || []).includes(toStatus);
+};
 
-  // ✅ Build friendly message for duplicate invoice_number
-  const duplicateMessageFor = (row) => {
-    const takenBy = String(row?.taken_by || "staff").trim();
-    const packedBy = String(row?.packed_by || "staff").trim();
-    const st = String(row?.status || "").trim();
-
-    if (st === "TAKING_IN_PROGRESS") {
-      return `Stock already taken by ${takenBy} and in taking progress`;
-    }
-    if (st === "TAKING_DONE") {
-      return `Stock already taken by ${takenBy} and waiting for verification`;
-    }
-    if (st === "VERIFY_IN_PROGRESS") {
-      return "Verify in progress";
-    }
-    if (st === "COMPLETED") {
-      return `Invoice number already packed by ${packedBy}`;
-    }
-    return "Invoice already exists";
-  };
-
-  const respondDuplicate = (invNo) => {
-    const inv = String(invNo || "").trim();
-    if (!inv) return res.status(409).json({ message: "Invoice already exists" });
-
-    db.query(
-      "SELECT invoice_id, invoice_number, status, taken_by, packed_by FROM packing WHERE invoice_number = ? LIMIT 1",
-      [inv],
-      (e, rows) => {
-        if (e) return res.status(409).json({ message: "Invoice already exists" });
-        const ex = rows?.[0];
-        if (!ex) return res.status(409).json({ message: "Invoice already exists" });
-
-        return res.status(409).json({
-          message: duplicateMessageFor(ex),
-          existing: ex, // optional (useful for debugging)
-        });
-      }
-    );
-  };
-
-  // =========================
-  // CREATE (no invoice_id)
-  // =========================
-  if (!invoice_id) {
-    if (
-      isBlank(invoice_number) ||
-      isBlank(no_of_products) ||
-      isBlank(customer_name) ||
-      isBlank(courier_name) ||
-      isBlank(taken_by)
-    ) {
-      return res
-        .status(400)
-        .json(
-          "invoice_number, no_of_products, customer_name, courier_name, taken_by are required"
-        );
-    }
-
-    const finalStatus =
-      status && !isBlank(status) ? String(status).trim() : "TAKING_IN_PROGRESS";
-
-    const insertSql = `
-      INSERT INTO packing
-        (invoice_number, no_of_products, invoice_value, customer_name, courier_name,
-         status, taken_by, take_started_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())
+const getActiveCount = (username) =>
+  new Promise((resolve, reject) => {
+    const u = clean(username);
+    const q = `
+      SELECT COUNT(*) AS c
+      FROM packing
+      WHERE
+        (status = 'TAKING' AND taken_by = ?)
+        OR
+        (status = 'VERIFYING' AND packed_by = ?)
     `;
+    db.query(q, [u, u], (err, rows) => {
+      if (err) return reject(err);
+      resolve(Number(rows?.[0]?.c || 0));
+    });
+  });
 
-    const finalInvoiceValue =
-      invoice_value === "" || invoice_value === undefined || invoice_value === null
-        ? null
-        : Number(invoice_value);
+// ✅ GET /api/packing  (main list endpoint)
+app.get("/api/packing", (req, res) => {
+  const date = clean(req.query.date); // YYYY-MM-DD
+  const status = clean(req.query.status); // TO_TAKE / ... / ALL
+  const search = clean(req.query.search);
+  const scope = clean(req.query.scope); // mine | all
+  const username = clean(req.query.username);
 
-    db.query(
-      insertSql,
-      [
-        String(invoice_number).trim(),
-        Number(no_of_products),
-        finalInvoiceValue,
-        String(customer_name).trim(),
-        String(courier_name).trim(),
-        finalStatus,
-        String(taken_by).trim(),
-      ],
-      (insertError, insertResult) => {
-        if (insertError) {
-          if (insertError.code === "ER_DUP_ENTRY") {
-            // ✅ return friendly message instead of plain "Invoice already exists"
-            return respondDuplicate(invoice_number);
-          }
-          return res.status(500).json(insertError);
-        }
-
-        db.query(
-          "SELECT * FROM packing WHERE invoice_id = ?",
-          [insertResult.insertId],
-          (selectError, rows) => {
-            if (selectError) return res.status(500).json(selectError);
-            return res.status(200).json({ action: "created", data: rows[0] });
-          }
-        );
-      }
-    );
-
-    return;
-  }
-
-  // =========================
-  // UPDATE / TRANSITIONS
-  // =========================
-  db.query(
-    "SELECT * FROM packing WHERE invoice_id = ?",
-    [invoice_id],
-    (readError, rows) => {
-      if (readError) return res.status(500).json(readError);
-      if (!rows.length) return res.status(404).json("Invoice not found");
-
-      const currentRow = rows[0];
-
-      // status can be omitted for edit-only requests
-      const nextStatus =
-        status === undefined || isBlank(status)
-          ? currentRow.status
-          : String(status).trim();
-
-      if (status !== undefined && !canTransition(currentRow.status, nextStatus)) {
-        return res
-          .status(400)
-          .json(`Invalid status transition: ${currentRow.status} -> ${nextStatus}`);
-      }
-
-      // -------------------------
-      // EDIT (no status provided)
-      // -------------------------
-      if (status === undefined) {
-        const updateSql = `
-          UPDATE packing
-          SET
-            invoice_number = COALESCE(?, invoice_number),
-            no_of_products = COALESCE(?, no_of_products),
-            invoice_value  = ?,
-            customer_name  = COALESCE(?, customer_name),
-            courier_name   = COALESCE(?, courier_name),
-            taken_by       = COALESCE(?, taken_by),
-            updated_at     = NOW()
-          WHERE invoice_id = ?
-        `;
-
-        const finalInvoiceValue =
-          invoice_value === undefined
-            ? currentRow.invoice_value
-            : invoice_value === "" || invoice_value === null
-            ? null
-            : Number(invoice_value);
-
-        const safeTakenBy = toTrimOrNull(taken_by);
-
-        db.query(
-          updateSql,
-          [
-            invoice_number !== undefined ? String(invoice_number).trim() : null,
-            no_of_products !== undefined ? Number(no_of_products) : null,
-            finalInvoiceValue,
-            customer_name !== undefined ? String(customer_name).trim() : null,
-            courier_name !== undefined ? String(courier_name).trim() : null,
-            safeTakenBy,
-            invoice_id,
-          ],
-          (updateError) => {
-            if (updateError) {
-              if (updateError.code === "ER_DUP_ENTRY") {
-                // ✅ friendly duplicate message on edit as well
-                return respondDuplicate(invoice_number);
-              }
-              return res.status(500).json(updateError);
-            }
-
-            db.query(
-              "SELECT * FROM packing WHERE invoice_id = ?",
-              [invoice_id],
-              (selectError, updatedRows) => {
-                if (selectError) return res.status(500).json(selectError);
-                return res.status(200).json({ action: "updated", data: updatedRows[0] });
-              }
-            );
-          }
-        );
-
-        return;
-      }
-
-      // -------------------------
-      // TRANSITIONS
-      // -------------------------
-
-      // ✅ TAKING_IN_PROGRESS -> TAKING_DONE
-      if (nextStatus === "TAKING_DONE") {
-        const safeTakenBy = toTrimOrNull(taken_by);
-
-        // Prefer provided taken_by (if non-blank), otherwise keep existing.
-        const updateSql = `
-          UPDATE packing
-          SET
-            status = 'TAKING_DONE',
-            taken_by = CASE
-              WHEN ? IS NULL THEN taken_by
-              ELSE ?
-            END,
-            take_completed_at = NOW(),
-            updated_at = NOW()
-          WHERE invoice_id = ?
-        `;
-
-        db.query(updateSql, [safeTakenBy, safeTakenBy, invoice_id], (updateError) => {
-          if (updateError) return res.status(500).json(updateError);
-
-          db.query(
-            "SELECT * FROM packing WHERE invoice_id = ?",
-            [invoice_id],
-            (selectError, updatedRows) => {
-              if (selectError) return res.status(500).json(selectError);
-              return res.status(200).json({
-                action: "taking_completed",
-                data: updatedRows[0],
-              });
-            }
-          );
-        });
-
-        return;
-      }
-
-      // ✅ TAKING_DONE -> VERIFY_IN_PROGRESS
-      if (nextStatus === "VERIFY_IN_PROGRESS") {
-        const safePackedBy = toTrimOrNull(packed_by);
-        if (!safePackedBy) return res.status(400).json("packed_by is required");
-
-        const updateSql = `
-          UPDATE packing
-          SET
-            status = 'VERIFY_IN_PROGRESS',
-            packed_by = ?,
-            verify_started_at = NOW(),
-            updated_at = NOW()
-          WHERE invoice_id = ?
-        `;
-
-        db.query(updateSql, [safePackedBy, invoice_id], (updateError) => {
-          if (updateError) return res.status(500).json(updateError);
-
-          db.query(
-            "SELECT * FROM packing WHERE invoice_id = ?",
-            [invoice_id],
-            (selectError, updatedRows) => {
-              if (selectError) return res.status(500).json(selectError);
-              return res.status(200).json({
-                action: "verify_started",
-                data: updatedRows[0],
-              });
-            }
-          );
-        });
-
-        return;
-      }
-
-      // ✅ VERIFY_IN_PROGRESS -> COMPLETED
-      if (nextStatus === "COMPLETED") {
-        const updateSql = `
-          UPDATE packing
-          SET
-            status = 'COMPLETED',
-            pack_completed_at = NOW(),
-            updated_at = NOW()
-          WHERE invoice_id = ?
-        `;
-
-        db.query(updateSql, [invoice_id], (updateError) => {
-          if (updateError) return res.status(500).json(updateError);
-
-          db.query(
-            "SELECT * FROM packing WHERE invoice_id = ?",
-            [invoice_id],
-            (selectError, updatedRows) => {
-              if (selectError) return res.status(500).json(selectError);
-              return res.status(200).json({
-                action: "packing_completed",
-                data: updatedRows[0],
-              });
-            }
-          );
-        });
-
-        return;
-      }
-
-      return res.status(400).json("Unsupported status update");
-    }
-  );
-});
-
-app.get("/packing", (req, res) => {
-  const { date } = req.query;
-
-  const qBase = "SELECT * FROM packing";
-  const qOrder = " ORDER BY created_at DESC";
+  let sql = "SELECT * FROM packing WHERE 1=1";
+  const params = [];
 
   if (date) {
-    const q = `${qBase} WHERE DATE(created_at) = ? ${qOrder}`;
-    db.query(q, [date], (err, rows) => {
-      if (err) return res.status(500).json(err);
-      return res.status(200).json(rows);
-    });
-    return;
+    // filter by invoice_date primarily (recommended), fallback to created_at
+    sql += " AND (invoice_date = ? OR DATE(created_at) = ?)";
+    params.push(date, date);
   }
 
-  db.query(`${qBase} ${qOrder}`, (err, rows) => {
+  if (status && status !== "ALL") {
+    if (!STATUSES.includes(status)) {
+      return res.status(400).json({ message: "Invalid status filter" });
+    }
+    sql += " AND status = ?";
+    params.push(status);
+  }
+
+  if (search) {
+    sql += " AND (invoice_number LIKE ? OR customer_name LIKE ?)";
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  // scope=mine => only invoices I touched (taken_by or packed_by)
+  if (scope === "mine") {
+    if (!username) return res.status(400).json({ message: "username required for scope=mine" });
+    sql += " AND (taken_by = ? OR packed_by = ?)";
+    params.push(username, username);
+  }
+
+  sql += " ORDER BY created_at DESC";
+
+  db.query(sql, params, (err, rows) => {
     if (err) return res.status(500).json(err);
-    return res.status(200).json(rows);
+    return res.status(200).json(rows || []);
   });
 });
 
-app.get("/getcheques", (req, res)=>{
-  console.log("request submitted")
-  const sqlGet= "SELECT * FROM cheques_issued_for_clearance";
-  db.query(sqlGet, (error, result)=>{
-      if (error) return res.status(500).json(error);
-      console.log(result)
-      return res.send(result)
-      
-  })
-})
+// ✅ GET /api/me/job  (my active invoices: TAKING by me OR VERIFYING by me)
+app.get("/api/me/job", (req, res) => {
+  const username = clean(req.query.username);
+  if (!username) return res.status(400).json({ message: "username required" });
 
+  const q = `
+    SELECT *
+    FROM packing
+    WHERE
+      (status = 'TAKING' AND taken_by = ?)
+      OR
+      (status = 'VERIFYING' AND packed_by = ?)
+    ORDER BY updated_at DESC
+    LIMIT 2
+  `;
 
-
-app.get ('/getcheque/:id', (req, res) =>{
-  const {id} = req.params;
-  console.log("id to get post is ", id)
-  const q = "SELECT * FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
-  db.query(q, [id], (err, data)=>{
-      if (err) return res.status(500).json(err);
-      console.log("post", data[0]);
-      return res.status(200).json(data[0]);
-  })
-})
-
-app.post("/addcheque", (req, res)=>{
-  const { chq_no, chq_date, supplier_name, chq_amnt } = req.body;
-  console.log(chq_no, chq_date, supplier_name, chq_amnt);
-  const sqlAdd = "INSERT INTO cheques_issued_for_clearance (chq_no, chq_date, supplier_name, chq_amnt) VALUES (?, ?, ?, ?)";
-  db.query(sqlAdd, [chq_no, chq_date, supplier_name, chq_amnt], (error, result)=>{
-      res.send(result);
-  })
-})
-
-app.post("/deletecheque/:id", (req, res)=>{
-  const {id} = req.params;
-  console.log(id);
-  const sqlDelete = "DELETE FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
-  db.query(sqlDelete, [id], (error, result)=>{
-      console.log(error);
-  })
-})
-
-app.put("/editcheque/:id", (req, res)=>{
-  const { id } = req.params;
-  const  {chq_no, chq_date, supplier_name, chq_amnt } = req.body;
-  console.log("Data to edit", chq_no, chq_date, supplier_name, chq_amnt)
-  const sqlGet= "UPDATE cheques_issued_for_clearance SET chq_no=?, chq_date=?, supplier_name=?, chq_amnt=? WHERE chq_issue_id = ?";
-  db.query(sqlGet, [chq_no, chq_date, supplier_name, chq_amnt, id], (error, result)=>{
-      if (error) {
-          console.log(error)
-      }
-      res.send(result)
+  db.query(q, [username, username], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json(rows || []);
   });
-})
+});
 
-app.get("/getrepadjustments", (req, res)=>{
-  console.log("request submitted")
-  const sqlGet= "SELECT * FROM rep_adjustment";
-  db.query(sqlGet, (error, result)=>{
-      res.send(result)
-  })
-})
+// ✅ GET /api/me/bills-to-take  (TO_TAKE)
+app.get("/api/me/bills-to-take", (req, res) => {
+  const date = clean(req.query.date);
 
-app.get("/getpurchaseissues", (req, res)=>{
-  const sqlGet= "SELECT * FROM purchase_issues";
-  db.query(sqlGet, (error, result)=>{
-      res.send(result)
-  })
-})
+  let q = "SELECT * FROM packing WHERE status = 'TO_TAKE'";
+  const params = [];
+
+  if (date) {
+    q += " AND (invoice_date = ? OR DATE(created_at) = ?)";
+    params.push(date, date);
+  }
+
+  q += " ORDER BY created_at DESC";
+
+  db.query(q, params, (err, rows) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json(rows || []);
+  });
+});
+
+// ✅ GET /api/me/bills-to-verify  (TO_VERIFY but not taken_by me)
+app.get("/api/me/bills-to-verify", (req, res) => {
+  const date = clean(req.query.date);
+  const username = clean(req.query.username);
+  if (!username) return res.status(400).json({ message: "username required" });
+
+  let q = "SELECT * FROM packing WHERE status = 'TO_VERIFY' AND (taken_by IS NULL OR taken_by <> ?)";
+  const params = [username];
+
+  if (date) {
+    q += " AND (invoice_date = ? OR DATE(created_at) = ?)";
+    params.push(date, date);
+  }
+
+  q += " ORDER BY created_at DESC";
+
+  db.query(q, params, (err, rows) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json(rows || []);
+  });
+});
+
+// ✅ POST /api/packing/start-taking  TO_TAKE -> TAKING
+app.post("/api/packing/start-taking", async (req, res) => {
+  const invoice_id = req.body.invoice_id;
+  const username = clean(req.body.username);
+
+  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+  try {
+    const active = await getActiveCount(username);
+    if (active >= 2) {
+      return res.status(403).json({ message: "You can work only 2 invoices at a time." });
+    }
+  } catch (e) {
+    return res.status(500).json(e);
+  }
+
+  db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const row = rows[0];
+    if (row.status !== "TO_TAKE") {
+      return res.status(400).json({ message: `Invalid status: ${row.status}` });
+    }
+
+    db.query(
+      `
+      UPDATE packing
+      SET status='TAKING', taken_by=?, take_started_at=NOW(), updated_at=NOW()
+      WHERE invoice_id=?
+      `,
+      [username, invoice_id],
+      (e2) => {
+        if (e2) return res.status(500).json(e2);
+        return res.status(200).json({ ok: true });
+      }
+    );
+  });
+});
+
+// ✅ POST /api/packing/mark-taken  TAKING -> TO_VERIFY  (only taken_by can complete)
+app.post("/api/packing/mark-taken", (req, res) => {
+  const invoice_id = req.body.invoice_id;
+  const username = clean(req.body.username);
+
+  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+  db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const row = rows[0];
+
+    if (!canTransition(row.status, "TO_VERIFY")) {
+      return res.status(400).json({ message: `Invalid transition: ${row.status} -> TO_VERIFY` });
+    }
+
+    if (clean(row.taken_by) !== username) {
+      return res.status(403).json({ message: "Only the staff who started taking can mark taken." });
+    }
+
+    db.query(
+      `
+      UPDATE packing
+      SET status='TO_VERIFY', take_completed_at=NOW(), updated_at=NOW()
+      WHERE invoice_id=?
+      `,
+      [invoice_id],
+      (e2) => {
+        if (e2) return res.status(500).json(e2);
+        return res.status(200).json({ ok: true });
+      }
+    );
+  });
+});
+
+// ✅ POST /api/packing/start-verify  TO_VERIFY -> VERIFYING (taken_by cannot verify)
+app.post("/api/packing/start-verify", async (req, res) => {
+  const invoice_id = req.body.invoice_id;
+  const username = clean(req.body.username);
+
+  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+  try {
+    const active = await getActiveCount(username);
+    if (active >= 2) {
+      return res.status(403).json({ message: "You can work only 2 invoices at a time." });
+    }
+  } catch (e) {
+    return res.status(500).json(e);
+  }
+
+  db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const row = rows[0];
+
+    if (!canTransition(row.status, "VERIFYING")) {
+      return res.status(400).json({ message: `Invalid transition: ${row.status} -> VERIFYING` });
+    }
+
+    // taken_by cannot be packed_by
+    if (clean(row.taken_by) && clean(row.taken_by) === username) {
+      return res.status(403).json({ message: "The staff who took stock cannot verify & pack the same invoice." });
+    }
+
+    db.query(
+      `
+      UPDATE packing
+      SET status='VERIFYING', packed_by=?, verify_started_at=NOW(), updated_at=NOW()
+      WHERE invoice_id=?
+      `,
+      [username, invoice_id],
+      (e2) => {
+        if (e2) return res.status(500).json(e2);
+        return res.status(200).json({ ok: true });
+      }
+    );
+  });
+});
+
+// ✅ POST /api/packing/mark-packed  VERIFYING -> PACKED (only packed_by can complete)
+app.post("/api/packing/mark-packed", (req, res) => {
+  const invoice_id = req.body.invoice_id;
+  const username = clean(req.body.username);
+
+  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+  db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+    if (err) return res.status(500).json(err);
+    if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const row = rows[0];
+
+    if (!canTransition(row.status, "PACKED")) {
+      return res.status(400).json({ message: `Invalid transition: ${row.status} -> PACKED` });
+    }
+
+    if (clean(row.packed_by) !== username) {
+      return res.status(403).json({ message: "Only the staff who started verifying can mark packed." });
+    }
+
+    db.query(
+      `
+      UPDATE packing
+      SET status='PACKED', pack_completed_at=NOW(), updated_at=NOW()
+      WHERE invoice_id=?
+      `,
+      [invoice_id],
+      (e2) => {
+        if (e2) return res.status(500).json(e2);
+        return res.status(200).json({ ok: true });
+      }
+    );
+  });
+});
+
+// ==============================
+// NEW PACKING LIST API
+// ==============================
+app.get("/api/packing", (req, res) => {
+  const { date, status, search, scope, username } = req.query;
+
+  let sql = "SELECT * FROM packing WHERE 1=1";
+  const params = [];
+
+  // Date filter (preferred: invoice_date, fallback: created_at)
+  if (date) {
+    sql += " AND (invoice_date = ? OR DATE(created_at) = ?)";
+    params.push(date, date);
+  }
+
+  // Status filter
+  if (status && status !== "ALL") {
+    sql += " AND status = ?";
+    params.push(status);
+  }
+
+  // Search filter
+  if (search) {
+    sql += " AND (invoice_number LIKE ? OR customer_name LIKE ?)";
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  // Scope filter (mine / all)
+  if (scope === "mine" && username) {
+    sql += " AND (taken_by = ? OR packed_by = ?)";
+    params.push(username, username);
+  }
+
+  sql += " ORDER BY created_at DESC";
+
+  db.query(sql, params, (err, rows) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json(rows || []);
+  });
+});
 
 app.post("/addpurchaseissue", (req, res)=>{
   const { recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to } = req.body;
@@ -594,17 +516,6 @@ app.get("/getpurchaseissues/:id", (req, res)=>{
     if (err) return res.status(500).json(err);
     console.log("post", data[0]);
     return res.status(200).json(data[0]);
-  })
-})
-
-app.get ('/getcheque/:id', (req, res) =>{
-  const {id} = req.params;
-  console.log("id to get post is ", id)
-  const q = "SELECT * FROM cheques_issued_for_clearance WHERE chq_issue_id=?";
-  db.query(q, [id], (err, data)=>{
-      if (err) return res.status(500).json(err);
-      console.log("post", data[0]);
-      return res.status(200).json(data[0]);
   })
 })
 
@@ -734,34 +645,6 @@ app.post('/upload', upload.single('file'), (req, res) => {
   res.send(file)
 })
 
-app.get("/categories", (req, res)=>{
-  const query = "SELECT * FROM grocery_category";
-
-  db.query(query, (error, result)=>{
-      console.log(result);
-      res.send(result)
-  })
-})
-app.get("/products", (req, res)=>{
-  console.log("Req received to fetch products")
-  const query = "SELECT * FROM grocery_products";
-
-  db.query(query, (error, result)=>{
-      console.log(result);
-      res.send(result)
-  })
-})
-
-app.post('/addproduct', (req, res)=>{
-console.log(req.body)
-const query = "INSERT INTO products (product_name, product_desc, product_packing, brand, sale_rate, category, image) VALUES(?,?,?,?,?,?,?)";
-db.query(query, [req.body.productName, req.body.productDesc, req.body.productPacking, req.body.productBrand, req.body.productSaleRate, req.body.productCategory, req.body.img], (error, result)=>{
- if (error) {
-  console.log(error)
- }
-  res.send(result)
-})
-})
 
 app.get("/stationaries", (req, res)=>{
   console.log("Req received to fetch products")
