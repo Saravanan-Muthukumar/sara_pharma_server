@@ -141,7 +141,7 @@ app.post("/logout", (req, res) => {
 });
 
 app.get("/api/getusers", (req, res) => {
-  db.query("SELECT * FROM users", (error, result) => res.send(result));
+  db.query("SELECT id, username, email, role FROM users", (error, result) => res.send(result));
 });
 
 /* =========================
