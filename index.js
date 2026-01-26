@@ -161,50 +161,6 @@ const getActiveCount = (username) =>
     });
   });
 
-// ✅ GET /api/packing  (main list endpoint)
-app.get("/api/packing", (req, res) => {
-  const date = clean(req.query.date); // YYYY-MM-DD
-  const status = clean(req.query.status); // TO_TAKE / ... / ALL
-  const search = clean(req.query.search);
-  const scope = clean(req.query.scope); // mine | all
-  const username = clean(req.query.username);
-
-  let sql = "SELECT * FROM packing WHERE 1=1";
-  const params = [];
-
-  if (date) {
-    // filter by invoice_date primarily (recommended), fallback to created_at
-    sql += " AND (invoice_date = ? OR DATE(created_at) = ?)";
-    params.push(date, date);
-  }
-
-  if (status && status !== "ALL") {
-    if (!STATUSES.includes(status)) {
-      return res.status(400).json({ message: "Invalid status filter" });
-    }
-    sql += " AND status = ?";
-    params.push(status);
-  }
-
-  if (search) {
-    sql += " AND (invoice_number LIKE ? OR customer_name LIKE ?)";
-    params.push(`%${search}%`, `%${search}%`);
-  }
-
-  // scope=mine => only invoices I touched (taken_by or packed_by)
-  if (scope === "mine") {
-    if (!username) return res.status(400).json({ message: "username required for scope=mine" });
-    sql += " AND (taken_by = ? OR packed_by = ?)";
-    params.push(username, username);
-  }
-
-  sql += " ORDER BY created_at DESC";
-
-  db.query(sql, params, (err, rows) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(rows || []);
-  });
-});
 
 // ✅ GET /api/me/job  (my active invoices: TAKING by me OR VERIFYING by me)
 app.get("/api/me/job", (req, res) => {
@@ -532,6 +488,57 @@ app.delete("/api/customers/:id", (req, res) => {
     if (err) return res.status(500).json(err);
     return res.status(200).json({ ok: true });
   });
+});
+
+// ✅ CREATE INVOICE (Billing/Admin) -> status TO_TAKE
+app.post("/api/packing/create", (req, res) => {
+  const invoice_number = clean(req.body.invoice_number);
+  const invoice_date = clean(req.body.invoice_date); // YYYY-MM-DD
+  const no_of_products = req.body.no_of_products;
+  const invoice_value = req.body.invoice_value;
+  const customer_name = clean(req.body.customer_name);
+  const rep_name = clean(req.body.rep_name) || null;
+  const courier_name = clean(req.body.courier_name);
+  const created_by = clean(req.body.created_by) || null;
+
+  if (!invoice_number || !invoice_date || !no_of_products || !customer_name || !courier_name) {
+    return res.status(400).json({
+      message: "invoice_number, invoice_date, no_of_products, customer_name, courier_name are required",
+    });
+  }
+
+  const sql = `
+    INSERT INTO packing
+      (invoice_number, invoice_date, no_of_products, invoice_value,
+       customer_name, rep_name, courier_name,
+       status, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
+  `;
+
+  db.query(
+    sql,
+    [
+      invoice_number,
+      invoice_date,
+      Number(no_of_products),
+      invoice_value === "" || invoice_value === null || invoice_value === undefined
+        ? null
+        : Number(invoice_value),
+      customer_name,
+      rep_name,
+      courier_name,
+      created_by,
+    ],
+    (err, result) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return res.status(409).json({ message: "Invoice number already exists" });
+        }
+        return res.status(500).json(err);
+      }
+      return res.status(200).json({ ok: true, invoice_id: result.insertId });
+    }
+  );
 });
 
 app.post("/addpurchaseissue", (req, res)=>{
