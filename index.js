@@ -469,6 +469,71 @@ app.get("/api/packing", (req, res) => {
   });
 });
 
+// BACKEND REQUIRED (Express) — add these endpoints for Customer CRUD
+// Put above app.listen(...)
+
+app.get("/api/customers", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  let sql = "SELECT customer_id, customer_name, city, rep_name FROM customers";
+  const params = [];
+
+  if (q) {
+    sql += " WHERE customer_name LIKE ? OR city LIKE ? OR rep_name LIKE ?";
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  sql += " ORDER BY customer_name ASC";
+
+  db.query(sql, params, (err, rows) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json(rows || []);
+  });
+});
+
+app.post("/api/customers", (req, res) => {
+  const customer_name = String(req.body.customer_name || "").trim();
+  const city = String(req.body.city || "").trim() || null;
+  const rep_name = String(req.body.rep_name || "").trim() || null;
+
+  if (!customer_name) return res.status(400).json({ message: "customer_name is required" });
+
+  const sql =
+    "INSERT INTO customers (customer_name, city, rep_name) VALUES (?, ?, ?)";
+
+  db.query(sql, [customer_name, city, rep_name], (err, result) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json({ ok: true, customer_id: result.insertId });
+  });
+});
+
+app.put("/api/customers/:id", (req, res) => {
+  const id = Number(req.params.id);
+  const customer_name = String(req.body.customer_name || "").trim();
+  const city = String(req.body.city || "").trim() || null;
+  const rep_name = String(req.body.rep_name || "").trim() || null;
+
+  if (!id) return res.status(400).json({ message: "invalid id" });
+  if (!customer_name) return res.status(400).json({ message: "customer_name is required" });
+
+  const sql =
+    "UPDATE customers SET customer_name=?, city=?, rep_name=? WHERE customer_id=?";
+
+  db.query(sql, [customer_name, city, rep_name, id], (err) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json({ ok: true });
+  });
+});
+
+app.delete("/api/customers/:id", (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ message: "invalid id" });
+
+  db.query("DELETE FROM customers WHERE customer_id=?", [id], (err) => {
+    if (err) return res.status(500).json(err);
+    return res.status(200).json({ ok: true });
+  });
+});
+
 app.post("/addpurchaseissue", (req, res)=>{
   const { recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to } = req.body;
   const sqlAdd = "INSERT INTO purchase_issues (recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
