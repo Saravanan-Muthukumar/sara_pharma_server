@@ -140,7 +140,7 @@ app.post("/logout", (req, res) => {
     .json("User has been logged out");
 });
 
-app.get("/api/get", (req, res) => {
+app.get("/api/getusers", (req, res) => {
   db.query("SELECT * FROM users", (error, result) => res.send(result));
 });
 
