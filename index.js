@@ -560,25 +560,14 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  const delSql = `
-    DELETE FROM feedback
-    WHERE DATE(pack_completed_at) = CURDATE()
-  `;
-
-  // NOTE: feedback table doesn't have pack_completed_at,
-  // so we delete by invoice_date = today’s pack list invoice_date set
-  // simplest: delete by invoice_date IN (packed today invoice_date list)
-  const delByInvoiceSql = `
+  const deleteSql = `
     DELETE f
     FROM feedback f
-    WHERE f.invoice_date IN (
-      SELECT DISTINCT DATE_FORMAT(p.invoice_date, '%Y-%m-%d')
-      FROM packing p
-      WHERE DATE(p.pack_completed_at) = CURDATE()
-    )
+    WHERE DATE(f.created_at) = CURDATE()
+      AND UPPER(TRIM(f.courier_name)) IN ('ST','PROFESSIONAL')
   `;
 
-  const insSql = `
+  const insertSql = `
     INSERT INTO feedback (
       courier_date,
       invoice_date,
@@ -599,8 +588,8 @@ app.post("/api/feedbacklist", (req, res) => {
       DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
       UPPER(TRIM(p.courier_name)) AS courier_name,
       TRIM(p.customer_name) AS customer_name,
-      TRIM(p.city) AS city,
-      TRIM(p.rep_name) AS rep_name,
+      TRIM(COALESCE(c.city, '')) AS city,
+      TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
       COUNT(*) AS invoice_count,
       NULL AS no_of_box,
       NULL AS stock_received,
@@ -609,38 +598,36 @@ app.post("/api/feedbacklist", (req, res) => {
       NULL AS feedback_time,
       NULL AS issue_resolved_time
     FROM packing p
+    LEFT JOIN customers c
+      ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
     WHERE DATE(p.pack_completed_at) = CURDATE()
-      AND UPPER(TRIM(p.courier_name)) IN ('ST', 'PROFESSIONAL')
+      AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
     GROUP BY
       DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
       UPPER(TRIM(p.courier_name)),
       TRIM(p.customer_name),
-      TRIM(p.city),
-      TRIM(p.rep_name)
+      TRIM(COALESCE(c.city, '')),
+      TRIM(COALESCE(p.rep_name, c.rep_name, ''))
     ORDER BY
       UPPER(TRIM(p.courier_name)),
       TRIM(p.customer_name)
   `;
 
-  const selSql = `
+  const selectSql = `
     SELECT *
     FROM feedback
-    WHERE invoice_date IN (
-      SELECT DISTINCT DATE_FORMAT(p.invoice_date, '%Y-%m-%d')
-      FROM packing p
-      WHERE DATE(p.pack_completed_at) = CURDATE()
-    )
-    AND UPPER(TRIM(courier_name)) IN ('ST','PROFESSIONAL')
+    WHERE DATE(created_at) = CURDATE()
+      AND UPPER(TRIM(courier_name)) IN ('ST','PROFESSIONAL')
     ORDER BY UPPER(TRIM(courier_name)), customer_name
   `;
 
-  db.query(delByInvoiceSql, (err) => {
+  db.query(deleteSql, (err) => {
     if (err) return res.status(500).json({ message: "Delete failed", err });
 
-    db.query(insSql, (err2) => {
+    db.query(insertSql, (err2) => {
       if (err2) return res.status(500).json({ message: "Insert failed", err: err2 });
 
-      db.query(selSql, (err3, rows) => {
+      db.query(selectSql, (err3, rows) => {
         if (err3) return res.status(500).json({ message: "Select failed", err: err3 });
         return res.status(200).json(rows || []);
       });
