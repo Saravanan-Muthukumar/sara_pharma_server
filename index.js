@@ -635,6 +635,41 @@ app.post("/api/feedbacklist", (req, res) => {
   });
 });
 
+app.put("/api/feedback/box", (req, res) => {
+  const feedback_id = Number(req.body?.feedback_id);
+  const no_of_box_raw = req.body?.no_of_box;
+
+  if (!Number.isFinite(feedback_id) || feedback_id <= 0) {
+    return res.status(400).json({ message: "Invalid feedback_id" });
+  }
+
+  let no_of_box = null;
+  if (no_of_box_raw !== "" && no_of_box_raw !== null && no_of_box_raw !== undefined) {
+    const n = Number(no_of_box_raw);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ message: "Invalid no_of_box" });
+    }
+    no_of_box = Math.floor(n);
+  }
+
+  const sql = `
+    UPDATE feedback
+    SET no_of_box = ?
+    WHERE feedback_id = ?
+  `;
+
+  db.query(sql, [no_of_box, feedback_id], (err, result) => {
+    if (err) return res.status(500).json({ message: "Update failed", err });
+
+    return res.status(200).json({
+      ok: true,
+      feedback_id,
+      no_of_box,
+    });
+  });
+});
+
+
 /* =========================
    YOUR EXISTING ROUTES
    (Purchase issues, collection, upload, stationary)
