@@ -560,63 +560,79 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  // 1️⃣ If courier not yet confirmed, reuse feedback
+  // 1) If already generated and not confirmed, return existing
   const checkSql = `
     SELECT *
     FROM feedback
     WHERE courier_date IS NULL
-    ORDER BY pack_completed_at ASC
+    ORDER BY pack_completed_at ASC, courier_name ASC, customer_name ASC
   `;
 
   db.query(checkSql, (err, existing) => {
     if (err) return res.status(500).json({ message: "Check failed", err });
 
-    if (existing.length > 0) {
-      return res.json(existing);
+    if ((existing || []).length > 0) {
+      return res.status(200).json(existing);
     }
 
-    // 2️⃣ Generate from packing (PACKED only, ST & PROFESSIONAL)
+    // 2) Generate from packing using pack_completed_at = today
     const insertSql = `
       INSERT INTO feedback (
+        courier_date,
         invoice_date,
         pack_completed_at,
+        courier_name,
         customer_name,
         city,
         rep_name,
-        courier_name,
-        invoice_count
+        invoice_count,
+        no_of_box,
+        stock_received,
+        stocks_ok,
+        follow_up,
+        feedback_time,
+        issue_resolved_time
       )
       SELECT
-        DATE(p.invoice_date) AS invoice_date,
-        p.pack_completed_at,
-        p.customer_name,
-        c.city,
-        p.rep_name,
-        UPPER(p.courier_name) AS courier_name,
-        COUNT(*) AS invoice_count
+        NULL AS courier_date,
+        DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
+        p.pack_completed_at AS pack_completed_at,
+        UPPER(TRIM(p.courier_name)) AS courier_name,
+        TRIM(p.customer_name) AS customer_name,
+        TRIM(COALESCE(c.city, '')) AS city,
+        TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
+        COUNT(*) AS invoice_count,
+        NULL AS no_of_box,
+        NULL AS stock_received,
+        NULL AS stocks_ok,
+        NULL AS follow_up,
+        NULL AS feedback_time,
+        NULL AS issue_resolved_time
       FROM packing p
-      LEFT JOIN customers c ON c.customer_name = p.customer_name
+      LEFT JOIN customers c
+        ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
       WHERE p.status = 'PACKED'
         AND DATE(p.pack_completed_at) = CURDATE()
-        AND UPPER(p.courier_name) IN ('ST','PROFESSIONAL')
+        AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
       GROUP BY
-        DATE(p.pack_completed_at),
-        p.customer_name,
-        c.city,
-        p.rep_name,
-        UPPER(p.courier_name)
+        DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
+        p.pack_completed_at,
+        UPPER(TRIM(p.courier_name)),
+        TRIM(p.customer_name),
+        TRIM(COALESCE(c.city, '')),
+        TRIM(COALESCE(p.rep_name, c.rep_name, ''))
     `;
 
     db.query(insertSql, (err2) => {
-      if (err2) return res.status(500).json({ message: "Insert failed", err2 });
+      if (err2) return res.status(500).json({ message: "Insert failed", err: err2 });
 
       db.query(checkSql, (err3, rows) => {
-        if (err3) return res.status(500).json({ message: "Fetch failed", err3 });
-        return res.json(rows);
+        if (err3) return res.status(500).json({ message: "Fetch failed", err: err3 });
+        return res.status(200).json(rows || []);
       });
     });
   });
-});
+})
 
 app.post("/api/feedback/box", (req, res) => {
   const feedback_id = Number(req.body?.feedback_id);
