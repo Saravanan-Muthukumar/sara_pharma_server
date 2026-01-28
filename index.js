@@ -703,7 +703,7 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 
     const updateSql = `
       UPDATE feedback
-      SET courier_date = ?, courier_confirmed_at = NOW()
+      SET courier_date = ?
       WHERE feedback_id IN (?)
         AND courier_date IS NULL
     `;
