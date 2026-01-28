@@ -587,7 +587,7 @@ app.post("/api/feedbacklist", (req, res) => {
         invoice_count
       )
       SELECT
-        DATE(p.pack_completed_at) AS invoice_date,
+        DATE(p.invoice_date) AS invoice_date,
         p.pack_completed_at,
         p.customer_name,
         c.city,
