@@ -635,37 +635,28 @@ app.post("/api/feedbacklist", (req, res) => {
   });
 });
 
-app.put("/api/feedback/box", (req, res) => {
+app.post("/api/feedback/box", (req, res) => {
   const feedback_id = Number(req.body?.feedback_id);
-  const no_of_box_raw = req.body?.no_of_box;
+  const raw = req.body?.no_of_box;
 
   if (!Number.isFinite(feedback_id) || feedback_id <= 0) {
     return res.status(400).json({ message: "Invalid feedback_id" });
   }
 
+  // allow null (clear)
   let no_of_box = null;
-  if (no_of_box_raw !== "" && no_of_box_raw !== null && no_of_box_raw !== undefined) {
-    const n = Number(no_of_box_raw);
-    if (!Number.isFinite(n) || n < 0) {
-      return res.status(400).json({ message: "Invalid no_of_box" });
+  if (raw !== null && raw !== undefined && String(raw).trim() !== "") {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
+      return res.status(400).json({ message: "no_of_box must be a non-negative integer" });
     }
-    no_of_box = Math.floor(n);
+    no_of_box = n;
   }
 
-  const sql = `
-    UPDATE feedback
-    SET no_of_box = ?
-    WHERE feedback_id = ?
-  `;
-
-  db.query(sql, [no_of_box, feedback_id], (err, result) => {
+  const sql = "UPDATE feedback SET no_of_box = ? WHERE feedback_id = ?";
+  db.query(sql, [no_of_box, feedback_id], (err) => {
     if (err) return res.status(500).json({ message: "Update failed", err });
-
-    return res.status(200).json({
-      ok: true,
-      feedback_id,
-      no_of_box,
-    });
+    return res.status(200).json({ ok: true, feedback_id, no_of_box });
   });
 });
 
