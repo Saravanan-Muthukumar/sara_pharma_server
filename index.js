@@ -560,76 +560,52 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  const deleteSql = `
-    DELETE f
-    FROM feedback f
-    WHERE DATE(f.created_at) = CURDATE()
-      AND UPPER(TRIM(f.courier_name)) IN ('ST','PROFESSIONAL')
-  `;
+  const today = new Date().toISOString().slice(0, 10);
 
-  const insertSql = `
-    INSERT INTO feedback (
-      courier_date,
-      invoice_date,
-      courier_name,
-      customer_name,
-      city,
-      rep_name,
-      invoice_count,
-      no_of_box,
-      stock_received,
-      stocks_ok,
-      follow_up,
-      feedback_time,
-      issue_resolved_time
-    )
-    SELECT
-      NULL AS courier_date,
-      DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
-      UPPER(TRIM(p.courier_name)) AS courier_name,
-      TRIM(p.customer_name) AS customer_name,
-      TRIM(COALESCE(c.city, '')) AS city,
-      TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
-      COUNT(*) AS invoice_count,
-      NULL AS no_of_box,
-      NULL AS stock_received,
-      NULL AS stocks_ok,
-      NULL AS follow_up,
-      NULL AS feedback_time,
-      NULL AS issue_resolved_time
-    FROM packing p
-    LEFT JOIN customers c
-      ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
-    WHERE DATE(p.pack_completed_at) = CURDATE()
-      AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
-    GROUP BY
-      DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
-      UPPER(TRIM(p.courier_name)),
-      TRIM(p.customer_name),
-      TRIM(COALESCE(c.city, '')),
-      TRIM(COALESCE(p.rep_name, c.rep_name, ''))
-    ORDER BY
-      UPPER(TRIM(p.courier_name)),
-      TRIM(p.customer_name)
-  `;
-
-  const selectSql = `
+  // 1️⃣ Check if feedback already exists
+  const checkSql = `
     SELECT *
     FROM feedback
-    WHERE DATE(created_at) = CURDATE()
-      AND UPPER(TRIM(courier_name)) IN ('ST','PROFESSIONAL')
-    ORDER BY UPPER(TRIM(courier_name)), customer_name
+    WHERE invoice_date = ?
   `;
 
-  db.query(deleteSql, (err) => {
-    if (err) return res.status(500).json({ message: "Delete failed", err });
+  db.query(checkSql, [today], (err, existing) => {
+    if (err) return res.status(500).json({ message: "Check failed", err });
 
-    db.query(insertSql, (err2) => {
-      if (err2) return res.status(500).json({ message: "Insert failed", err: err2 });
+    // ✅ If exists → RETURN IT (this keeps no_of_box)
+    if (existing.length > 0) {
+      return res.json(existing);
+    }
 
-      db.query(selectSql, (err3, rows) => {
-        if (err3) return res.status(500).json({ message: "Select failed", err: err3 });
-        return res.status(200).json(rows || []);
+    // 2️⃣ Else generate from packing
+    const insertSql = `
+      INSERT INTO feedback (
+        invoice_date,
+        customer_name,
+        city,
+        rep_name,
+        invoice_count
+      )
+      SELECT
+        DATE(p.pack_completed_at) AS invoice_date,
+        p.customer_name,
+        c.city,
+        p.rep_name,
+        COUNT(*) AS invoice_count
+      FROM packing p
+      LEFT JOIN customers c ON c.customer_name = p.customer_name
+      WHERE DATE(p.pack_completed_at) = ?
+        AND UPPER(p.courier_name) IN ('ST','PROFESSIONAL')
+      GROUP BY p.customer_name, c.city, p.rep_name
+    `;
+
+    db.query(insertSql, [today], (err2) => {
+      if (err2) return res.status(500).json({ message: "Insert failed", err2 });
+
+      // 3️⃣ Read back (with no_of_box column)
+      db.query(checkSql, [today], (err3, rows) => {
+        if (err3) return res.status(500).json({ message: "Fetch failed", err3 });
+        return res.json(rows);
       });
     });
   });
