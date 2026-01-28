@@ -566,7 +566,7 @@ app.post("/api/feedbacklist", (req, res) => {
   const checkSql = `
     SELECT *
     FROM feedback
-    WHERE invoice_date = ?
+    WHERE courier_date IS NULL
   `;
 
   db.query(checkSql, [today], (err, existing) => {
