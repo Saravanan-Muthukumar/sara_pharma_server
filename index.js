@@ -659,6 +659,67 @@ app.post("/api/feedback/box", (req, res) => {
   });
 });
 
+app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
+  const { feedback_ids, courier_date } = req.body;
+
+  if (!Array.isArray(feedback_ids) || feedback_ids.length === 0 || !courier_date) {
+    return res.status(400).json({ message: "feedback_ids[] and courier_date are required" });
+  }
+
+  const ids = [...new Set(feedback_ids)].map(Number).filter(Boolean);
+  if (ids.length === 0) {
+    return res.status(400).json({ message: "feedback_ids must contain valid numbers" });
+  }
+
+  const selectSql = `
+    SELECT feedback_id, customer_name, courier_name, pack_completed_at, no_of_box, courier_date
+    FROM feedback
+    WHERE feedback_id IN (?)
+  `;
+
+  db.query(selectSql, [ids], (err, rows) => {
+    if (err) return res.status(500).json({ message: "DB error", err });
+
+    const list = Array.isArray(rows) ? rows : [];
+
+    // Only validate rows that are still unconfirmed
+    const unconfirmed = list.filter((r) => r.courier_date == null);
+
+    const missing = unconfirmed
+      .filter((r) => r.no_of_box == null || r.no_of_box === "")
+      .map((r) => ({
+        feedback_id: r.feedback_id,
+        customer_name: r.customer_name,
+        courier_name: r.courier_name,
+        packed_date: r.pack_completed_at ? String(r.pack_completed_at).slice(0, 10) : null,
+      }));
+
+    if (missing.length > 0) {
+      return res.status(400).json({
+        message: "Please update No. of Box for all customers before confirming",
+        missing,
+      });
+    }
+
+    const updateSql = `
+      UPDATE feedback
+      SET courier_date = ?, courier_confirmed_at = NOW()
+      WHERE feedback_id IN (?)
+        AND courier_date IS NULL
+    `;
+
+    db.query(updateSql, [courier_date, ids], (err2, result) => {
+      if (err2) return res.status(500).json({ message: "DB update failed", err: err2 });
+
+      return res.json({
+        message: "Courier confirmed",
+        updated: result?.affectedRows || 0,
+      });
+    });
+  });
+});
+
+
 
 /* =========================
    YOUR EXISTING ROUTES
