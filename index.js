@@ -560,50 +560,57 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
-
-  // 1️⃣ Check if feedback already exists
+  // 1️⃣ If courier not yet confirmed, reuse feedback
   const checkSql = `
     SELECT *
     FROM feedback
     WHERE courier_date IS NULL
+    ORDER BY pack_completed_at ASC
   `;
 
-  db.query(checkSql, [today], (err, existing) => {
+  db.query(checkSql, (err, existing) => {
     if (err) return res.status(500).json({ message: "Check failed", err });
 
-    // ✅ If exists → RETURN IT (this keeps no_of_box)
     if (existing.length > 0) {
       return res.json(existing);
     }
 
-    // 2️⃣ Else generate from packing
+    // 2️⃣ Generate from packing (PACKED only, ST & PROFESSIONAL)
     const insertSql = `
       INSERT INTO feedback (
         invoice_date,
+        pack_completed_at,
         customer_name,
         city,
         rep_name,
+        courier_name,
         invoice_count
       )
       SELECT
         DATE(p.pack_completed_at) AS invoice_date,
+        p.pack_completed_at,
         p.customer_name,
         c.city,
         p.rep_name,
+        UPPER(p.courier_name) AS courier_name,
         COUNT(*) AS invoice_count
       FROM packing p
       LEFT JOIN customers c ON c.customer_name = p.customer_name
-      WHERE DATE(p.pack_completed_at) = ?
+      WHERE p.status = 'PACKED'
+        AND DATE(p.pack_completed_at) = CURDATE()
         AND UPPER(p.courier_name) IN ('ST','PROFESSIONAL')
-      GROUP BY p.customer_name, c.city, p.rep_name
+      GROUP BY
+        DATE(p.pack_completed_at),
+        p.customer_name,
+        c.city,
+        p.rep_name,
+        UPPER(p.courier_name)
     `;
 
-    db.query(insertSql, [today], (err2) => {
+    db.query(insertSql, (err2) => {
       if (err2) return res.status(500).json({ message: "Insert failed", err2 });
 
-      // 3️⃣ Read back (with no_of_box column)
-      db.query(checkSql, [today], (err3, rows) => {
+      db.query(checkSql, (err3, rows) => {
         if (err3) return res.status(500).json({ message: "Fetch failed", err3 });
         return res.json(rows);
       });
