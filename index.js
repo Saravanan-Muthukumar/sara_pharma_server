@@ -560,79 +560,97 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  // 1) If already generated and not confirmed, return existing
-  const checkSql = `
+  // 1) If ANY unconfirmed exists (yesterday or today), return it
+  const pendingSql = `
     SELECT *
     FROM feedback
     WHERE courier_date IS NULL
     ORDER BY pack_completed_at ASC, courier_name ASC, customer_name ASC
   `;
 
-  db.query(checkSql, (err, existing) => {
+  db.query(pendingSql, (err, pending) => {
     if (err) return res.status(500).json({ message: "Check failed", err });
 
-    if ((existing || []).length > 0) {
-      return res.status(200).json(existing);
+    if ((pending || []).length > 0) {
+      return res.status(200).json({ mode: "pending", rows: pending });
     }
 
-    // 2) Generate from packing using pack_completed_at = today
-    const insertSql = `
-      INSERT INTO feedback (
-        courier_date,
-        invoice_date,
-        pack_completed_at,
-        courier_name,
-        customer_name,
-        city,
-        rep_name,
-        invoice_count,
-        no_of_box,
-        stock_received,
-        stocks_ok,
-        follow_up,
-        feedback_time,
-        issue_resolved_time
-      )
-      SELECT
-        NULL AS courier_date,
-        DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
-        p.pack_completed_at AS pack_completed_at,
-        UPPER(TRIM(p.courier_name)) AS courier_name,
-        TRIM(p.customer_name) AS customer_name,
-        TRIM(COALESCE(c.city, '')) AS city,
-        TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
-        COUNT(*) AS invoice_count,
-        NULL AS no_of_box,
-        NULL AS stock_received,
-        NULL AS stocks_ok,
-        NULL AS follow_up,
-        NULL AS feedback_time,
-        NULL AS issue_resolved_time
-      FROM packing p
-      LEFT JOIN customers c
-        ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
-      WHERE p.status = 'PACKED'
-        AND DATE(p.pack_completed_at) = CURDATE()
-        AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
-      GROUP BY
-        DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
-        p.pack_completed_at,
-        UPPER(TRIM(p.courier_name)),
-        TRIM(p.customer_name),
-        TRIM(COALESCE(c.city, '')),
-        TRIM(COALESCE(p.rep_name, c.rep_name, ''))
+    // 2) No pending => if today's pack list already exists, return it (VIEW)
+    const todaySql = `
+      SELECT *
+      FROM feedback
+      WHERE DATE(pack_completed_at) = CURDATE()
+        AND UPPER(TRIM(courier_name)) IN ('ST','PROFESSIONAL')
+      ORDER BY pack_completed_at ASC, courier_name ASC, customer_name ASC
     `;
 
-    db.query(insertSql, (err2) => {
-      if (err2) return res.status(500).json({ message: "Insert failed", err: err2 });
+    db.query(todaySql, (err2, todayRows) => {
+      if (err2) return res.status(500).json({ message: "Today fetch failed", err: err2 });
 
-      db.query(checkSql, (err3, rows) => {
-        if (err3) return res.status(500).json({ message: "Fetch failed", err: err3 });
-        return res.status(200).json(rows || []);
+      if ((todayRows || []).length > 0) {
+        return res.status(200).json({ mode: "view", rows: todayRows });
+      }
+
+      // 3) Nothing pending + nothing today => CREATE today's list
+      const insertSql = `
+        INSERT INTO feedback (
+          courier_date,
+          invoice_date,
+          pack_completed_at,
+          courier_name,
+          customer_name,
+          city,
+          rep_name,
+          invoice_count,
+          no_of_box,
+          stock_received,
+          stocks_ok,
+          follow_up,
+          feedback_time,
+          issue_resolved_time
+        )
+        SELECT
+          NULL AS courier_date,
+          DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
+          p.pack_completed_at,
+          UPPER(TRIM(p.courier_name)) AS courier_name,
+          TRIM(p.customer_name) AS customer_name,
+          TRIM(COALESCE(c.city, '')) AS city,
+          TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
+          COUNT(*) AS invoice_count,
+          NULL AS no_of_box,
+          NULL AS stock_received,
+          NULL AS stocks_ok,
+          NULL AS follow_up,
+          NULL AS feedback_time,
+          NULL AS issue_resolved_time
+        FROM packing p
+        LEFT JOIN customers c
+          ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
+        WHERE p.status = 'PACKED'
+          AND DATE(p.pack_completed_at) = CURDATE()
+          AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
+        GROUP BY
+          DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
+          p.pack_completed_at,
+          UPPER(TRIM(p.courier_name)),
+          TRIM(p.customer_name),
+          TRIM(COALESCE(c.city, '')),
+          TRIM(COALESCE(p.rep_name, c.rep_name, ''))
+      `;
+
+      db.query(insertSql, (err3) => {
+        if (err3) return res.status(500).json({ message: "Insert failed", err: err3 });
+
+        db.query(todaySql, (err4, createdRows) => {
+          if (err4) return res.status(500).json({ message: "Fetch failed", err: err4 });
+          return res.status(200).json({ mode: "created", rows: createdRows || [] });
+        });
       });
     });
   });
-})
+});
+
 
 app.post("/api/feedback/box", (req, res) => {
   const feedback_id = Number(req.body?.feedback_id);
