@@ -612,7 +612,7 @@ app.post("/api/feedbacklist", (req, res) => {
         SELECT
           NULL AS courier_date,
           DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
-          pMAX(p.pack_completed_at) AS pack_completed_at,
+          MAX(p.pack_completed_at) AS pack_completed_at,
           UPPER(TRIM(p.courier_name)) AS courier_name,
           TRIM(p.customer_name) AS customer_name,
           TRIM(COALESCE(c.city, '')) AS city,
