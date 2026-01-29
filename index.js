@@ -612,7 +612,7 @@ app.post("/api/feedbacklist", (req, res) => {
         SELECT
           NULL AS courier_date,
           DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
-          p.pack_completed_at,
+          pMAX(p.pack_completed_at) AS pack_completed_at,
           UPPER(TRIM(p.courier_name)) AS courier_name,
           TRIM(p.customer_name) AS customer_name,
           TRIM(COALESCE(c.city, '')) AS city,
@@ -632,7 +632,7 @@ app.post("/api/feedbacklist", (req, res) => {
           AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
         GROUP BY
           DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
-          p.pack_completed_at,
+          DATE(p.pack_completed_at),
           UPPER(TRIM(p.courier_name)),
           TRIM(p.customer_name),
           TRIM(COALESCE(c.city, '')),
