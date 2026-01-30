@@ -738,12 +738,11 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 });
 
 app.get("/api/feedback/open", (req, res) => {
-  const role = req.user?.role;         // "billing" or "admin"
-  const loginName = req.user?.name;    // e.g. "Durga"
+  const role = req.user?.role;      // "billing" | "admin"
+  const loginName = req.user?.name; // e.g. "Durga"
 
   const { customer, invoice_date, courier_date } = req.query;
 
-  // Base
   let sql = `
     SELECT
       feedback_id,
@@ -758,7 +757,6 @@ app.get("/api/feedback/open", (req, res) => {
       stock_received,
       stocks_ok,
       follow_up,
-      feedback,
       feedback_time,
       issue_resolved_time
     FROM feedback
@@ -767,13 +765,11 @@ app.get("/api/feedback/open", (req, res) => {
 
   const params = [];
 
-  // Role filter
   if (role === "billing") {
     sql += ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`;
     params.push(loginName || "");
   }
 
-  // Search filters
   if (customer) {
     sql += ` AND LOWER(customer_name) LIKE ?`;
     params.push(`%${String(customer).toLowerCase()}%`);
@@ -807,23 +803,15 @@ app.post("/api/feedback/update", (req, res) => {
   const role = req.user?.role;
   const loginName = req.user?.name;
 
-  const { feedback_id, stock_received, stocks_ok, feedback } = req.body;
+  const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
 
   if (!feedback_id) {
     return res.status(400).json({ message: "feedback_id is required" });
   }
 
-  const sr = stock_received ? String(stock_received).toUpperCase() : null; // YES/NO
-  const ok = stocks_ok ? String(stocks_ok).toUpperCase() : null;           // YES/NO
+  const sr = stock_received; // expect 1/0/null
+  const ok = stocks_ok;      // expect 1/0/null
 
-  if (sr && !["YES", "NO"].includes(sr)) {
-    return res.status(400).json({ message: "stock_received must be YES or NO" });
-  }
-  if (ok && !["YES", "NO"].includes(ok)) {
-    return res.status(400).json({ message: "stocks_ok must be YES or NO" });
-  }
-
-  // Billing staff can update only their rep_name rows (simple guard)
   const guardSql =
     role === "billing"
       ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
@@ -831,34 +819,37 @@ app.post("/api/feedback/update", (req, res) => {
 
   const guardParams = role === "billing" ? [loginName || ""] : [];
 
-  // Decide update fields
-  // - ALWAYS set feedback_time = NOW() on any save
-  // - issue_resolved_time set only when sr=YES & ok=YES (or when ok becomes YES after issue)
-  let updateSql = `
+  // Decide final values
+  // Normalize sr/ok to numbers or null
+  const srVal = sr === 1 || sr === "1" || sr === true ? 1 : sr === 0 || sr === "0" || sr === false ? 0 : null;
+  const okVal = ok === 1 || ok === "1" || ok === true ? 1 : ok === 0 || ok === "0" || ok === false ? 0 : null;
+
+  // Rule: if sr=0 then ok should not be set
+  const finalOk = srVal === 0 ? null : okVal;
+
+  // follow_up rules
+  let followUpText = follow_up ?? null;
+
+  // If sr=1 and ok=1 -> close & follow_up not required
+  const shouldClose = srVal === 1 && finalOk === 1;
+
+  if (shouldClose) {
+    followUpText = "NOT REQUIRED";
+  }
+
+  const updateSql = `
     UPDATE feedback
     SET
       stock_received = ?,
       stocks_ok = ?,
-      feedback = ?,
-      feedback_time = NOW(),
-      follow_up = ?
-      ${/* conditionally set issue_resolved_time */ ""}
-      ${sr === "YES" && ok === "YES" ? ", issue_resolved_time = NOW()" : ""}
+      follow_up = ?,
+      feedback_time = NOW()
+      ${shouldClose ? ", issue_resolved_time = NOW()" : ""}
     WHERE feedback_id = ?
     ${guardSql}
   `;
 
-  // follow_up rule
-  // - sr=YES & ok=YES -> NOT_REQUIRED
-  // - sr=NO -> REQUIRED (you didn’t explicitly say, but you want follow-up)
-  // - sr=YES & ok=NO -> REQUIRED
-  let followUp = null;
-  if (sr === "YES" && ok === "YES") followUp = "NOT_REQUIRED";
-  else if (sr === "NO") followUp = "REQUIRED";
-  else if (sr === "YES" && ok === "NO") followUp = "REQUIRED";
-  else followUp = "REQUIRED";
-
-  const params = [sr, ok, feedback || null, followUp, feedback_id, ...guardParams];
+  const params = [srVal, finalOk, followUpText, feedback_id, ...guardParams];
 
   db.query(updateSql, params, (err, result) => {
     if (err) {
@@ -868,12 +859,10 @@ app.post("/api/feedback/update", (req, res) => {
         sqlMessage: err.sqlMessage,
       });
     }
-
     if ((result?.affectedRows || 0) === 0) {
       return res.status(404).json({ message: "Not found or not allowed" });
     }
-
-    return res.json({ message: "Saved" });
+    return res.json({ message: shouldClose ? "Saved & Resolved" : "Saved" });
   });
 });
 
