@@ -914,7 +914,7 @@ app.get("/api/reports/staff-timeline", (req, res) => {
       SELECT
         verify_started_at AS start_time,
         pack_completed_at AS end_time,
-        'Pack' AS action,
+        'Verify' AS action,
         customer_name
       FROM packing
       WHERE packed_by = ?
