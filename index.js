@@ -866,6 +866,76 @@ app.post("/api/feedback/update", (req, res) => {
   });
 });
 
+app.get("/api/reports/staff-timeline", (req, res) => {
+  const username = clean(req.query.username);
+  const from = clean(req.query.from); // optional YYYY-MM-DD
+  const to = clean(req.query.to);     // optional YYYY-MM-DD
+
+  if (!username) {
+    return res.status(400).json({ message: "username is required" });
+  }
+
+  const dateFilter =
+    from && to
+      ? `AND DATE(start_time) BETWEEN ? AND ?`
+      : ``;
+
+  const params = from && to ? [username, username, from, to] : [username, username];
+
+  const sql = `
+    SELECT
+      start_time,
+      end_time,
+      action,
+      customer_name,
+      CASE
+        WHEN end_time IS NULL THEN 'IN_PROGRESS'
+        ELSE 'COMPLETED'
+      END AS status,
+      TIMESTAMPDIFF(
+        MINUTE,
+        start_time,
+        COALESCE(end_time, NOW())
+      ) AS duration_minutes
+    FROM (
+      -- Stock Take
+      SELECT
+        take_started_at AS start_time,
+        take_completed_at AS end_time,
+        'Stock Take' AS action,
+        customer_name
+      FROM packing
+      WHERE taken_by = ?
+        AND take_started_at IS NOT NULL
+
+      UNION ALL
+
+      -- Stock Verify & Packed
+      SELECT
+        verify_started_at AS start_time,
+        pack_completed_at AS end_time,
+        'Stock Verify and Packed' AS action,
+        customer_name
+      FROM packing
+      WHERE packed_by = ?
+        AND verify_started_at IS NOT NULL
+    ) t
+    WHERE 1=1
+    ${dateFilter}
+    ORDER BY start_time DESC
+  `;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch staff timeline",
+        err,
+      });
+    }
+
+    return res.status(200).json(rows || []);
+  });
+});
 
 
 /* =========================
