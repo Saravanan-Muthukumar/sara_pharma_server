@@ -888,6 +888,9 @@ app.get("/api/reports/staff-timeline", (req, res) => {
       end_time,
       action,
       customer_name,
+      invoice_number,
+      no_of_products,
+      invoice_value,
       CASE
         WHEN end_time IS NULL THEN 'IN_PROGRESS'
         ELSE 'COMPLETED'
@@ -903,7 +906,10 @@ app.get("/api/reports/staff-timeline", (req, res) => {
         take_started_at AS start_time,
         take_completed_at AS end_time,
         'Take' AS action,
-        customer_name
+        customer_name,
+        invoice_number,
+        no_of_products,
+        invoice_value
       FROM packing
       WHERE taken_by = ?
         AND take_started_at IS NOT NULL
@@ -915,7 +921,10 @@ app.get("/api/reports/staff-timeline", (req, res) => {
         verify_started_at AS start_time,
         pack_completed_at AS end_time,
         'Verify' AS action,
-        customer_name
+        customer_name,
+        invoice_number,
+        no_of_products,
+        invoice_value
       FROM packing
       WHERE packed_by = ?
         AND verify_started_at IS NOT NULL
