@@ -902,7 +902,7 @@ app.get("/api/reports/staff-timeline", (req, res) => {
       SELECT
         take_started_at AS start_time,
         take_completed_at AS end_time,
-        'Stock Take' AS action,
+        'Take' AS action,
         customer_name
       FROM packing
       WHERE taken_by = ?
@@ -914,7 +914,7 @@ app.get("/api/reports/staff-timeline", (req, res) => {
       SELECT
         verify_started_at AS start_time,
         pack_completed_at AS end_time,
-        'Stock Verify and Packed' AS action,
+        'Verify&Packed' AS action,
         customer_name
       FROM packing
       WHERE packed_by = ?
