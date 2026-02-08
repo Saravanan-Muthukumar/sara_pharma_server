@@ -738,8 +738,10 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 });
 
 app.get("/api/feedback/open", (req, res) => {
-  const loginName = String(req.user?.name || "").trim();
+  const loginName = req.user?.username || req.user?.name; // support both
+  if (!loginName) return res.status(401).json({ message: "Unauthorized" });
   const isAdmin = loginName.toLowerCase() === "admin";
+  
 
   const { customer, invoice_date, courier_date, status } = req.query;
 
@@ -809,7 +811,8 @@ app.get("/api/feedback/open", (req, res) => {
 });
 
 app.post("/api/feedback/update", (req, res) => {
-  const loginName = String(req.user?.name || "").trim();
+  const loginName = String(req.user?.username || req.user?.name || "").trim();
+  if (!loginName) return res.status(401).json({ message: "Unauthorized" });
   const isAdmin = loginName.toLowerCase() === "admin";
 
   const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
@@ -821,11 +824,11 @@ app.post("/api/feedback/update", (req, res) => {
   const sr = stock_received; // expect 1/0/null
   const ok = stocks_ok;      // expect 1/0/null
 
-  const guardSql = !isAdmin
+const guardSql = !isAdmin
   ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
   : ``;
 
-  const guardParams = !isAdmin ? [loginName] : [];
+const guardParams = !isAdmin ? [loginName] : [];  
 
   // Decide final values
   // Normalize sr/ok to numbers or null
@@ -858,6 +861,9 @@ app.post("/api/feedback/update", (req, res) => {
   `;
 
   const params = [srVal, finalOk, followUpText, feedback_id, ...guardParams];
+
+  console.log("UPDATE user:", req.user, "loginName:", loginName, "isAdmin:", isAdmin);
+  console.log("UPDATE params:", params);
 
   db.query(updateSql, params, (err, result) => {
     if (err) {
