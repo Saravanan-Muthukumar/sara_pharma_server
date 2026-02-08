@@ -738,8 +738,8 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 });
 
 app.get("/api/feedback/open", (req, res) => {
-  const loginName = String(req.user?.name || "").trim();
-  const isAdmin = loginName.toLowerCase() === "admin";
+  const role = req.user?.role;      // "billing" | "admin"
+  const loginName = req.user?.name; // e.g. "Durga"
 
   const { customer, invoice_date, courier_date, status } = req.query;
 
@@ -774,9 +774,9 @@ app.get("/api/feedback/open", (req, res) => {
     sql += ` AND issue_resolved_time IS NULL`;
   }
 
-  if (!isAdmin) {
+  if (role === "billing") {
     sql += ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`;
-    params.push(loginName);
+    params.push(loginName || "");
   }
 
   if (customer) {
@@ -809,8 +809,8 @@ app.get("/api/feedback/open", (req, res) => {
 });
 
 app.post("/api/feedback/update", (req, res) => {
-  const loginName = String(req.user?.name || "").trim();
-  const isAdmin = loginName.toLowerCase() === "admin";
+  const role = req.user?.role;
+  const loginName = req.user?.name;
 
   const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
 
@@ -821,11 +821,12 @@ app.post("/api/feedback/update", (req, res) => {
   const sr = stock_received; // expect 1/0/null
   const ok = stocks_ok;      // expect 1/0/null
 
-  const guardSql = !isAdmin
-  ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
-  : ``;
+  const guardSql =
+    role === "billing"
+      ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
+      : ``;
 
-  const guardParams = !isAdmin ? [loginName] : [];
+  const guardParams = role === "billing" ? [loginName || ""] : [];
 
   // Decide final values
   // Normalize sr/ok to numbers or null
