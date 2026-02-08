@@ -738,10 +738,10 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 });
 
 app.get("/api/feedback/open", (req, res) => {
-  const role = req.user?.role;      // "billing" | "admin"
-  const loginName = req.user?.name; // e.g. "Durga"
+  const loginName = String(req.user?.name || "").trim();
+  const isAdmin = loginName.toLowerCase() === "admin";
 
-  const { customer, invoice_date, courier_date } = req.query;
+  const { customer, invoice_date, courier_date, status } = req.query;
 
   let sql = `
     SELECT
@@ -760,14 +760,23 @@ app.get("/api/feedback/open", (req, res) => {
       feedback_time,
       issue_resolved_time
     FROM feedback
-    WHERE issue_resolved_time IS NULL
+    WHERE 1=1
   `;
 
   const params = [];
 
-  if (role === "billing") {
+  if (status === "resolved") {
+    sql += ` AND issue_resolved_time IS NOT NULL`;
+  } else if (status === "all") {
+    // no filter
+  } else {
+    // default pending
+    sql += ` AND issue_resolved_time IS NULL`;
+  }
+
+  if (!isAdmin) {
     sql += ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`;
-    params.push(loginName || "");
+    params.push(loginName);
   }
 
   if (customer) {
@@ -800,8 +809,8 @@ app.get("/api/feedback/open", (req, res) => {
 });
 
 app.post("/api/feedback/update", (req, res) => {
-  const role = req.user?.role;
-  const loginName = req.user?.name;
+  const loginName = String(req.user?.name || "").trim();
+  const isAdmin = loginName.toLowerCase() === "admin";
 
   const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
 
@@ -812,12 +821,11 @@ app.post("/api/feedback/update", (req, res) => {
   const sr = stock_received; // expect 1/0/null
   const ok = stocks_ok;      // expect 1/0/null
 
-  const guardSql =
-    role === "billing"
-      ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
-      : ``;
+  const guardSql = !isAdmin
+  ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
+  : ``;
 
-  const guardParams = role === "billing" ? [loginName || ""] : [];
+  const guardParams = !isAdmin ? [loginName] : [];
 
   // Decide final values
   // Normalize sr/ok to numbers or null
