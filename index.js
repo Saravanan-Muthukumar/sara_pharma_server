@@ -272,6 +272,245 @@ app.post("/api/packing/mark-taken", (req, res) => {
   });
 });
 
+app.get("/api/packing/pack-info", (req, res) => {
+  const invoice_id = Number(req.query.invoice_id);
+  if (!Number.isFinite(invoice_id) || invoice_id <= 0) {
+    return res.status(400).json({ message: "invoice_id required" });
+  }
+
+  // 1) Find the clicked invoice (to get customer_id + invoice_number)
+  const invoiceSql = `
+    SELECT invoice_id, invoice_number, customer_id, invoice_date, status
+    FROM packing
+    WHERE invoice_id = ?
+  `;
+
+  db.query(invoiceSql, [invoice_id], (e1, rows1) => {
+    if (e1) {
+      return res.status(500).json({ message: "DB error", code: e1.code, sqlMessage: e1.sqlMessage });
+    }
+    if (!rows1?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const inv = rows1[0];
+    const customer_id = Number(inv.customer_id);
+
+    if (!Number.isFinite(customer_id) || customer_id <= 0) {
+      return res.status(400).json({ message: "Invoice missing customer_id" });
+    }
+
+    // 2) Get ALL invoice_numbers for SAME customer where invoice_date = TODAY
+    const listSql = `
+      SELECT invoice_number
+      FROM packing
+      WHERE customer_id = ?
+        AND DATE(invoice_date) = CURDATE()
+      ORDER BY invoice_number ASC
+    `;
+
+    db.query(listSql, [customer_id], (e2, rows2) => {
+      if (e2) {
+        return res.status(500).json({ message: "DB error", code: e2.code, sqlMessage: e2.sqlMessage });
+      }
+
+      const invoice_numbers = (rows2 || []).map((r) => String(r.invoice_number || "").trim()).filter(Boolean);
+      const invoice_count = invoice_numbers.length;
+
+      // 3) If feedback exists for same customer where pack_completed_at = TODAY, return its no_of_box/weight (for prefilling)
+      const fbSql = `
+        SELECT feedback_id, no_of_box, weight
+        FROM feedback
+        WHERE customer_id = ?
+          AND DATE(pack_completed_at) = CURDATE()
+        ORDER BY feedback_id DESC
+        LIMIT 1
+      `;
+
+      db.query(fbSql, [customer_id], (e3, fbRows) => {
+        if (e3) {
+          return res.status(500).json({ message: "DB error", code: e3.code, sqlMessage: e3.sqlMessage });
+        }
+
+        const fb = fbRows?.[0] || null;
+
+        return res.json({
+          invoice_id: inv.invoice_id,
+          invoice_number: inv.invoice_number,
+          customer_id,
+
+          invoice_count,
+          invoice_numbers,
+
+          existing_no_of_box: fb?.no_of_box ?? null,
+          existing_weight: fb?.weight ?? null,
+        });
+      });
+    });
+  });
+});
+
+app.post("/api/packing/mark-packed-with-feedback", (req, res) => {
+  const invoice_id = Number(req.body.invoice_id);
+  const username = clean(req.body.username);
+  const no_of_box = Number(req.body.no_of_box);
+
+  const weight =
+    req.body.weight === "" || req.body.weight === null || req.body.weight === undefined
+      ? null
+      : Number(req.body.weight);
+
+  if (!Number.isFinite(invoice_id) || invoice_id <= 0 || !username) {
+    return res.status(400).json({ message: "invoice_id and username required" });
+  }
+  if (!Number.isInteger(no_of_box) || no_of_box < 0) {
+    return res.status(400).json({ message: "no_of_box must be a non-negative integer" });
+  }
+  if (weight !== null && (!Number.isFinite(weight) || weight < 0)) {
+    return res.status(400).json({ message: "weight must be a non-negative number" });
+  }
+
+  db.beginTransaction((txErr) => {
+    if (txErr) return res.status(500).json({ message: "TX start failed", txErr });
+
+    // 1) Lock invoice row
+    db.query(
+      "SELECT * FROM packing WHERE invoice_id = ? FOR UPDATE",
+      [invoice_id],
+      (e1, rows) => {
+        if (e1) return db.rollback(() => res.status(500).json({ message: "DB error", e1 }));
+        if (!rows?.length) return db.rollback(() => res.status(404).json({ message: "Invoice not found" }));
+
+        const inv = rows[0];
+        const st = String(inv.status || "").trim();
+
+        if (!canTransition(st, "PACKED")) {
+          return db.rollback(() =>
+            res.status(400).json({ message: `Invalid transition: ${inv.status} -> PACKED` })
+          );
+        }
+
+        if (clean(inv.packed_by) !== username) {
+          return db.rollback(() =>
+            res.status(403).json({ message: "Only the staff who started verifying can mark packed." })
+          );
+        }
+
+        const customer_id = Number(inv.customer_id);
+        if (!Number.isFinite(customer_id) || customer_id <= 0) {
+          return db.rollback(() => res.status(400).json({ message: "Invoice missing customer_id" }));
+        }
+
+        // 2) invoice_count from PACKING where invoice_date = TODAY
+        const countSql = `
+          SELECT COUNT(*) AS c
+          FROM packing
+          WHERE customer_id = ?
+            AND DATE(invoice_date) = CURDATE()
+        `;
+
+        db.query(countSql, [customer_id], (e2, cRows) => {
+          if (e2) return db.rollback(() => res.status(500).json({ message: "Count failed", e2 }));
+
+          const invoice_count = Number(cRows?.[0]?.c || 0);
+
+          // 3) Update this invoice to PACKED
+          db.query(
+            "UPDATE packing SET status='PACKED', pack_completed_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
+            [invoice_id],
+            (e3) => {
+              if (e3) return db.rollback(() => res.status(500).json({ message: "Packing update failed", e3 }));
+
+              // 4) Feedback exists for same customer where pack_completed_at = TODAY?
+              const findFeedbackSql = `
+                SELECT feedback_id
+                FROM feedback
+                WHERE customer_id = ?
+                  AND DATE(pack_completed_at) = CURDATE()
+                ORDER BY feedback_id DESC
+                LIMIT 1
+              `;
+
+              db.query(findFeedbackSql, [customer_id], (e4, fbRows) => {
+                if (e4) return db.rollback(() => res.status(500).json({ message: "Feedback lookup failed", e4 }));
+
+                const feedback_id = fbRows?.[0]?.feedback_id || null;
+
+                const commitOk = (payload) =>
+                  db.commit((eCommit) => {
+                    if (eCommit) return db.rollback(() => res.status(500).json({ message: "Commit failed", eCommit }));
+                    return res.json(payload);
+                  });
+
+                if (feedback_id) {
+                  // ✅ UPDATE (no insert)
+                  const updateFeedbackSql = `
+                    UPDATE feedback
+                    SET
+                      no_of_box = ?,
+                      weight = ?,
+                      invoice_count = ?,
+                      pack_completed_at = NOW()
+                    WHERE feedback_id = ?
+                  `;
+
+                  db.query(updateFeedbackSql, [no_of_box, weight, invoice_count, feedback_id], (e5) => {
+                    if (e5) return db.rollback(() => res.status(500).json({ message: "Feedback update failed", e5 }));
+                    return commitOk({ ok: true, feedback_mode: "updated", feedback_id, invoice_count });
+                  });
+                } else {
+                  // ✅ INSERT new
+                  const insertFeedbackSql = `
+                    INSERT INTO feedback
+                      (invoice_date, customer_id, no_of_box, weight, pack_completed_at, invoice_count)
+                    VALUES
+                      (CURDATE(), ?, ?, ?, NOW(), ?)
+                  `;
+
+                  db.query(insertFeedbackSql, [customer_id, no_of_box, weight, invoice_count], (e6, ins) => {
+                    if (e6) return db.rollback(() => res.status(500).json({ message: "Feedback insert failed", e6 }));
+                    return commitOk({ ok: true, feedback_mode: "inserted", feedback_id: ins.insertId, invoice_count });
+                  });
+                }
+              });
+            }
+          );
+        });
+      }
+    );
+  });
+});
+
+
+
+// ✅ Mark packed: VERIFYING -> PACKED
+// app.post("/api/packing/mark-packed", (req, res) => {
+//   const invoice_id = req.body.invoice_id;
+//   const username = clean(req.body.username);
+//   if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+//   db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+//     if (err) return res.status(500).json(err);
+//     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+//     const row = rows[0];
+//     const st = (row.status);
+
+//     if (!canTransition(st, "PACKED"))
+//       return res.status(400).json({ message: `Invalid transition: ${row.status} -> PACKED` });
+
+//     if (clean(row.packed_by) !== username)
+//       return res.status(403).json({ message: "Only the staff who started verifying can mark packed." });
+
+//     db.query(
+//       "UPDATE packing SET status='PACKED', pack_completed_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
+//       [invoice_id],
+//       (e2) => {
+//         if (e2) return res.status(500).json(e2);
+//         return res.status(200).json({ ok: true });
+//       }
+//     );
+//   });
+// });
+
 // ✅ Start verify: TO_VERIFY -> VERIFYING
 // Fix for your error "Invalid transition: TAKEN -> VERIFYING":
 // - If your DB still contains TAKEN/Taken, normalizeStatus() maps it to TO_VERIFY, so it will now work.
@@ -303,36 +542,6 @@ app.post("/api/packing/start-verify", async (req, res) => {
     db.query(
       "UPDATE packing SET status='VERIFYING', packed_by=?, verify_started_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
       [username, invoice_id],
-      (e2) => {
-        if (e2) return res.status(500).json(e2);
-        return res.status(200).json({ ok: true });
-      }
-    );
-  });
-});
-
-// ✅ Mark packed: VERIFYING -> PACKED
-app.post("/api/packing/mark-packed", (req, res) => {
-  const invoice_id = req.body.invoice_id;
-  const username = clean(req.body.username);
-  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
-
-  db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
-    if (err) return res.status(500).json(err);
-    if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
-
-    const row = rows[0];
-    const st = (row.status);
-
-    if (!canTransition(st, "PACKED"))
-      return res.status(400).json({ message: `Invalid transition: ${row.status} -> PACKED` });
-
-    if (clean(row.packed_by) !== username)
-      return res.status(403).json({ message: "Only the staff who started verifying can mark packed." });
-
-    db.query(
-      "UPDATE packing SET status='PACKED', pack_completed_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
-      [invoice_id],
       (e2) => {
         if (e2) return res.status(500).json(e2);
         return res.status(200).json({ ok: true });
