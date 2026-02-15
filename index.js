@@ -335,8 +335,8 @@ app.post("/api/packing/create", (req, res) => {
   const invoice_date = clean(req.body.invoice_date) || null; // optional
   const no_of_products = req.body.no_of_products;
   const invoice_value = req.body.invoice_value;
-  const customer_name = clean(req.body.customer_name);
   const customer_id = clean(req.body.customer_id);
+  const customer_name = clean(req.body.customer_name);
   const rep_name = clean(req.body.rep_name) || null;
   const courier_name = clean(req.body.courier_name);
   const created_by = clean(req.body.created_by) || null;
@@ -349,7 +349,7 @@ app.post("/api/packing/create", (req, res) => {
 
   const sql = `
     INSERT INTO packing
-      (invoice_number, invoice_date, no_of_products, invoice_value, customer_id
+      (invoice_number, invoice_date, no_of_products, invoice_value, customer_id,
        customer_name, rep_name, courier_name,
        status, created_by, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
