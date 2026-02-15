@@ -762,11 +762,12 @@ app.post("/api/feedbacklist", (req, res) => {
       f.customer_id,
       f.invoice_date,
       f.pack_completed_at,
-      f.courier_name,
+      
 
       c.customer_name,
       c.city,
       c.rep_name,
+      c.courier_name,
 
       f.invoice_count,
       f.no_of_box,
