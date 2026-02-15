@@ -738,9 +738,10 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
 });
 
 app.get("/api/feedback/open", (req, res) => {
-  const role = req.user?.role;      // "billing" | "admin"
-  const loginName = req.user?.name; // e.g. "Durga"
+  const username = String(req.query.username || "").trim();
+  if (!username) return res.status(400).json({ message: "username required" });
 
+  const isAdmin = username.toLowerCase() === "admin";
   const { customer, invoice_date, courier_date, status } = req.query;
 
   let sql = `
@@ -765,18 +766,12 @@ app.get("/api/feedback/open", (req, res) => {
 
   const params = [];
 
-  if (status === "resolved") {
-    sql += ` AND issue_resolved_time IS NOT NULL`;
-  } else if (status === "all") {
-    // no filter
-  } else {
-    // default pending
-    sql += ` AND issue_resolved_time IS NULL`;
-  }
+  if (status === "resolved") sql += ` AND issue_resolved_time IS NOT NULL`;
+  else if (status !== "all") sql += ` AND issue_resolved_time IS NULL`;
 
-  if (role === "billing") {
+  if (!isAdmin) {
     sql += ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`;
-    params.push(loginName || "");
+    params.push(username);
   }
 
   if (customer) {
@@ -809,42 +804,37 @@ app.get("/api/feedback/open", (req, res) => {
 });
 
 app.post("/api/feedback/update", (req, res) => {
-  const role = req.user?.role;
-  const loginName = req.user?.name;
+  const username = String(req.body.username || "").trim();
+  if (!username) return res.status(400).json({ message: "username required" });
 
+  const isAdmin = username.toLowerCase() === "admin";
   const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
 
-  if (!feedback_id) {
-    return res.status(400).json({ message: "feedback_id is required" });
-  }
+  if (!feedback_id) return res.status(400).json({ message: "feedback_id is required" });
 
-  const sr = stock_received; // expect 1/0/null
-  const ok = stocks_ok;      // expect 1/0/null
+  const srVal =
+    stock_received === 1 || stock_received === "1" || stock_received === true
+      ? 1
+      : stock_received === 0 || stock_received === "0" || stock_received === false
+      ? 0
+      : null;
 
-  const guardSql =
-    role === "billing"
-      ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
-      : ``;
+  const okVal =
+    stocks_ok === 1 || stocks_ok === "1" || stocks_ok === true
+      ? 1
+      : stocks_ok === 0 || stocks_ok === "0" || stocks_ok === false
+      ? 0
+      : null;
 
-  const guardParams = role === "billing" ? [loginName || ""] : [];
-
-  // Decide final values
-  // Normalize sr/ok to numbers or null
-  const srVal = sr === 1 || sr === "1" || sr === true ? 1 : sr === 0 || sr === "0" || sr === false ? 0 : null;
-  const okVal = ok === 1 || ok === "1" || ok === true ? 1 : ok === 0 || ok === "0" || ok === false ? 0 : null;
-
-  // Rule: if sr=0 then ok should not be set
   const finalOk = srVal === 0 ? null : okVal;
 
-  // follow_up rules
   let followUpText = follow_up ?? null;
-
-  // If sr=1 and ok=1 -> close & follow_up not required
   const shouldClose = srVal === 1 && finalOk === 1;
+  if (shouldClose) followUpText = "NOT REQUIRED";
 
-  if (shouldClose) {
-    followUpText = "NOT REQUIRED";
-  }
+  const guardSql = !isAdmin
+    ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
+    : ``;
 
   const updateSql = `
     UPDATE feedback
@@ -858,7 +848,9 @@ app.post("/api/feedback/update", (req, res) => {
     ${guardSql}
   `;
 
-  const params = [srVal, finalOk, followUpText, feedback_id, ...guardParams];
+  const params = !isAdmin
+    ? [srVal, finalOk, followUpText, feedback_id, username]
+    : [srVal, finalOk, followUpText, feedback_id];
 
   db.query(updateSql, params, (err, result) => {
     if (err) {

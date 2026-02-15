@@ -36,27 +36,6 @@ const PORT = process.env.PORT || 8080;
 const isBlank = (v) => v === undefined || v === null || String(v).trim() === "";
 const clean = (v) => (isBlank(v) ? "" : String(v).trim());
 
-const normalizeStatus = (s) => {
-  const v = clean(s).toUpperCase();
-
-  if (v === "TAKEN" || v === "TAKE" || v === "TAKEN " || v === "TAKEN_BILLS") return "TO_VERIFY";
-  if (v === "PACKED") return "PACKED";
-
-  if (v === "TO_TAKE") return "TO_TAKE";
-  if (v === "TAKING") return "TAKING";
-  if (v === "TO_VERIFY") return "TO_VERIFY";
-  if (v === "VERIFYING") return "VERIFYING";
-
-  // common human labels
-  if (v.includes("TO TAKE")) return "TO_TAKE";
-  if (v.includes("TO VERIFY")) return "TO_VERIFY";
-  if (v.includes("VERIFY")) return "VERIFYING";
-  if (v.includes("TAK")) return "TAKING";
-
-  return v || "";
-};
-
-const STATUSES = ["TO_TAKE", "TAKING", "TO_VERIFY", "VERIFYING", "PACKED"];
 
 const canTransition = (fromStatus, toStatus) => {
   const allowed = {
@@ -235,7 +214,7 @@ app.post("/api/packing/start-taking", async (req, res) => {
     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
 
     const row = rows[0];
-    const st = normalizeStatus(row.status);
+    const st = (row.status);
 
     if (st !== "TO_TAKE") return res.status(400).json({ message: `Invalid status: ${row.status}` });
 
@@ -261,7 +240,7 @@ app.post("/api/packing/mark-taken", (req, res) => {
     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
 
     const row = rows[0];
-    const st = normalizeStatus(row.status);
+    const st = (row.status);
 
     if (!canTransition(st, "TO_VERIFY"))
       return res.status(400).json({ message: `Invalid transition: ${row.status} -> TO_VERIFY` });
@@ -300,7 +279,7 @@ app.post("/api/packing/start-verify", async (req, res) => {
     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
 
     const row = rows[0];
-    const st = normalizeStatus(row.status);
+    const st = (row.status);
 
     if (!canTransition(st, "VERIFYING"))
       return res.status(400).json({ message: `Invalid transition: ${row.status} -> VERIFYING` });
@@ -330,7 +309,7 @@ app.post("/api/packing/mark-packed", (req, res) => {
     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
 
     const row = rows[0];
-    const st = normalizeStatus(row.status);
+    const st = (row.status);
 
     if (!canTransition(st, "PACKED"))
       return res.status(400).json({ message: `Invalid transition: ${row.status} -> PACKED` });
@@ -357,6 +336,7 @@ app.post("/api/packing/create", (req, res) => {
   const no_of_products = req.body.no_of_products;
   const invoice_value = req.body.invoice_value;
   const customer_name = clean(req.body.customer_name);
+  const customer_id = clean(req.body.customer_id);
   const rep_name = clean(req.body.rep_name) || null;
   const courier_name = clean(req.body.courier_name);
   const created_by = clean(req.body.created_by) || null;
@@ -369,10 +349,10 @@ app.post("/api/packing/create", (req, res) => {
 
   const sql = `
     INSERT INTO packing
-      (invoice_number, invoice_date, no_of_products, invoice_value,
+      (invoice_number, invoice_date, no_of_products, invoice_value, customer_id
        customer_name, rep_name, courier_name,
        status, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
   `;
 
   db.query(
@@ -947,149 +927,6 @@ app.get("/api/reports/staff-timeline", (req, res) => {
   });
 });
 
-
-/* =========================
-   YOUR EXISTING ROUTES
-   (Purchase issues, collection, upload, stationary)
-========================= */
-
-// --- PURCHASE ISSUES ---
-app.post("/addpurchaseissue", (req, res) => {
-  const { recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to } =
-    req.body;
-
-  const sqlAdd =
-    "INSERT INTO purchase_issues (recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-  db.query(
-    sqlAdd,
-    [recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to],
-    (error, result) => {
-      if (error) console.log(error);
-      res.send(result);
-    }
-  );
-});
-
-app.post("/addcomment", (req, res) => {
-  const { comment, recorded_by, recorded_date, issue_id } = req.body;
-  const sqlAdd = "INSERT INTO comments (comment, recorded_by, recorded_date, issue_id) VALUES (?, ?, ?, ?)";
-  db.query(sqlAdd, [comment, recorded_by, recorded_date, issue_id], (error, result) => res.send(result));
-});
-
-app.get("/getcomments/:pur_issue_id", (req, res) => {
-  const sqlGet = "SELECT * FROM comments WHERE issue_id=?";
-  db.query(sqlGet, [req.params.pur_issue_id], (error, result) => {
-    if (error) console.log(error);
-    res.send(result);
-  });
-});
-
-app.get("/deleteissue/:id", (req, res) => {
-  const { id } = req.params;
-  const sqlDelete = "DELETE FROM purchase_issues WHERE pur_issue_id=?";
-  db.query(sqlDelete, [id], (error) => console.log(error));
-});
-
-app.get("/getpurchaseissues/:id", (req, res) => {
-  const { id } = req.params;
-  const sqlGet = "SELECT * FROM purchase_issues WHERE pur_issue_id=?";
-  db.query(sqlGet, [id], (err, data) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(data[0]);
-  });
-});
-
-app.put("/editpurchaseissue/:id", (req, res) => {
-  const { id } = req.params;
-  const { recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to } =
-    req.body;
-
-  const sqlGet =
-    "UPDATE purchase_issues SET recorded_by=?, date_recorded=?, supplier_name=?, product_name=?, qty=?, issue=?, status=?, description=?, assigned_to=? WHERE pur_issue_id = ?";
-
-  db.query(
-    sqlGet,
-    [recorded_by, date_recorded, supplier_name, product_name, qty, issue, status, description, assigned_to, id],
-    (err, data) => {
-      if (err) return res.status(500).json(err);
-      return res.status(200).json(data[0]);
-    }
-  );
-});
-
-// --- COLLECTION ---
-app.get("/getcollections", (req, res) => {
-  db.query("SELECT * FROM collection", (error, result) => res.send(result));
-});
-
-app.post("/addcollection", (req, res) => {
-  const { recorded_by, date_recorded, customer_name, followup_date, status } = req.body;
-  const sqlAdd =
-    "INSERT INTO collection (recorded_by, date_recorded, customer_name, followup_date, status) VALUES (?, ?, ?, ?, ?)";
-  db.query(sqlAdd, [recorded_by, date_recorded, customer_name, followup_date, status], (error, result) => {
-    if (error) console.log(error);
-    res.send(result);
-  });
-});
-
-app.get("/deletecollection/:id", (req, res) => {
-  const { id } = req.params;
-  db.query("DELETE FROM collection WHERE col_id=?", [id], (error) => console.log(error));
-});
-
-app.get("/getcollection/:id", (req, res) => {
-  const { id } = req.params;
-  db.query("SELECT * FROM collection WHERE col_id=?", [id], (err, data) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(data[0]);
-  });
-});
-
-app.put("/editcollection/:id", (req, res) => {
-  const { id } = req.params;
-  const { recorded_by, date_recorded, customer_name, followup_date, status } = req.body;
-  const sqlGet =
-    "UPDATE collection SET recorded_by=?, date_recorded=?, customer_name=?, followup_date=?, status=? WHERE col_id = ?";
-  db.query(sqlGet, [recorded_by, date_recorded, customer_name, followup_date, status, id], (err, data) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(data[0]);
-  });
-});
-
-app.put("/editcollectionFollowUp/:id", (req, res) => {
-  const { id } = req.params;
-  const { followup_date } = req.body;
-  db.query("UPDATE collection SET followup_date=? WHERE col_id = ?", [followup_date, id], (err, data) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(data[0]);
-  });
-});
-
-app.put("/editcollectionStatus/:id", (req, res) => {
-  const { id } = req.params;
-  const { status } = req.body;
-  db.query("UPDATE collection SET status=? WHERE col_id = ?", [status, id], (err, data) => {
-    if (err) return res.status(500).json(err);
-    return res.status(200).json(data[0]);
-  });
-});
-
-app.post("/addcollectioncomment", (req, res) => {
-  const { comment, recorded_by, recorded_date, col_id } = req.body;
-  const sqlAdd = "INSERT INTO collection_comment (comment, recorded_by, recorded_date, col_id) VALUES (?, ?, ?, ?)";
-  db.query(sqlAdd, [comment, recorded_by, recorded_date, col_id], (error, result) => {
-    if (error) console.log(error);
-    res.send(result);
-  });
-});
-
-app.get("/getcollectioncomments/:pur_issue_id", (req, res) => {
-  db.query("SELECT * FROM collection_comment WHERE col_id=?", [req.params.pur_issue_id], (error, result) => {
-    if (error) console.log(error);
-    res.send(result);
-  });
-});
 
 // --- UPLOAD ---
 const storage = multer.diskStorage({
