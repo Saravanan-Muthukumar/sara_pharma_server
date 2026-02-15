@@ -131,17 +131,30 @@ app.get("/api/getusers", (req, res) => {
 
 app.get("/api/invoices/today", (req, res) => {
   const sql = `
-    SELECT *
-    FROM packing
+    SELECT
+      p.*,
+      c.customer_name,
+      c.rep_name,
+      c.courier_name,
+      c.city
+    FROM packing p
+    LEFT JOIN customers c
+      ON c.customer_id = p.customer_id
     WHERE
-      status IN ('TO_TAKE','TAKING','TO_VERIFY','VERIFYING')
-      OR DATE(take_completed_at) = CURDATE()
-      OR DATE(pack_completed_at) = CURDATE()
-    ORDER BY updated_at DESC
+      p.status IN ('TO_TAKE','TAKING','TO_VERIFY','VERIFYING')
+      OR DATE(p.take_completed_at) = CURDATE()
+      OR DATE(p.pack_completed_at) = CURDATE()
+    ORDER BY p.updated_at DESC
   `;
 
   db.query(sql, (err, rows) => {
-    if (err) return res.status(500).json(err);
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to load invoices",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
     return res.status(200).json(rows || []);
   });
 });
