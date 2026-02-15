@@ -362,6 +362,7 @@ app.post("/api/packing/create", (req, res) => {
       invoice_date,
       Number(no_of_products),
       invoice_value === "" || invoice_value === null || invoice_value === undefined ? null : Number(invoice_value),
+      customer_id,
       customer_name,
       rep_name,
       courier_name,
