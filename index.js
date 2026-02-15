@@ -756,97 +756,50 @@ app.delete("/api/customers/:id", (req, res) => {
 });
 
 app.post("/api/feedbacklist", (req, res) => {
-  // 1) If ANY unconfirmed exists (yesterday or today), return it
-  const pendingSql = `
-    SELECT *
-    FROM feedback
-    WHERE courier_date IS NULL
-    ORDER BY pack_completed_at ASC, courier_name ASC, customer_name ASC
+  const sql = `
+    SELECT
+      f.feedback_id,
+      f.customer_id,
+      f.invoice_date,
+      f.pack_completed_at,
+      f.courier_name,
+
+      c.customer_name,
+      c.city,
+      c.rep_name,
+
+      f.invoice_count,
+      f.no_of_box,
+      f.stock_received,
+      f.stocks_ok,
+      f.follow_up,
+      f.feedback_time,
+      f.issue_resolved_time,
+      f.courier_date
+    FROM feedback f
+    LEFT JOIN customers c
+      ON c.customer_id = f.customer_id
+    WHERE DATE(f.pack_completed_at) = CURDATE()
+    ORDER BY
+      f.pack_completed_at ASC,
+      c.customer_name ASC
   `;
 
-  db.query(pendingSql, (err, pending) => {
-    if (err) return res.status(500).json({ message: "Check failed", err });
-
-    if ((pending || []).length > 0) {
-      return res.status(200).json({ mode: "pending", rows: pending });
+  db.query(sql, (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to load feedback",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
     }
 
-    // 2) No pending => if today's pack list already exists, return it (VIEW)
-    const todaySql = `
-      SELECT *
-      FROM feedback
-      WHERE DATE(pack_completed_at) = CURDATE()
-        AND UPPER(TRIM(courier_name)) IN ('ST','PROFESSIONAL')
-      ORDER BY pack_completed_at ASC, courier_name ASC, customer_name ASC
-    `;
-
-    db.query(todaySql, (err2, todayRows) => {
-      if (err2) return res.status(500).json({ message: "Today fetch failed", err: err2 });
-
-      if ((todayRows || []).length > 0) {
-        return res.status(200).json({ mode: "view", rows: todayRows });
-      }
-
-      // 3) Nothing pending + nothing today => CREATE today's list
-      const insertSql = `
-        INSERT INTO feedback (
-          courier_date,
-          invoice_date,
-          pack_completed_at,
-          courier_name,
-          customer_name,
-          city,
-          rep_name,
-          invoice_count,
-          no_of_box,
-          stock_received,
-          stocks_ok,
-          follow_up,
-          feedback_time,
-          issue_resolved_time
-        )
-        SELECT
-          NULL AS courier_date,
-          DATE_FORMAT(p.invoice_date, '%Y-%m-%d') AS invoice_date,
-          MAX(p.pack_completed_at) AS pack_completed_at,
-          UPPER(TRIM(p.courier_name)) AS courier_name,
-          TRIM(p.customer_name) AS customer_name,
-          TRIM(COALESCE(c.city, '')) AS city,
-          TRIM(COALESCE(p.rep_name, c.rep_name, '')) AS rep_name,
-          COUNT(*) AS invoice_count,
-          NULL AS no_of_box,
-          NULL AS stock_received,
-          NULL AS stocks_ok,
-          NULL AS follow_up,
-          NULL AS feedback_time,
-          NULL AS issue_resolved_time
-        FROM packing p
-        LEFT JOIN customers c
-          ON LOWER(TRIM(c.customer_name)) = LOWER(TRIM(p.customer_name))
-        WHERE p.status = 'PACKED'
-          AND DATE(p.pack_completed_at) = CURDATE()
-          AND UPPER(TRIM(p.courier_name)) IN ('ST','PROFESSIONAL')
-        GROUP BY
-          DATE_FORMAT(p.invoice_date, '%Y-%m-%d'),
-          DATE(p.pack_completed_at),
-          UPPER(TRIM(p.courier_name)),
-          TRIM(p.customer_name),
-          TRIM(COALESCE(c.city, '')),
-          TRIM(COALESCE(p.rep_name, c.rep_name, ''))
-      `;
-
-      db.query(insertSql, (err3) => {
-        if (err3) return res.status(500).json({ message: "Insert failed", err: err3 });
-
-        db.query(todaySql, (err4, createdRows) => {
-          if (err4) return res.status(500).json({ message: "Fetch failed", err: err4 });
-          return res.status(200).json({ mode: "created", rows: createdRows || [] });
-        });
-      });
+    return res.status(200).json({
+      mode: "view",
+      rows: rows || [],
     });
   });
 });
-
 
 app.post("/api/feedback/box", (req, res) => {
   const feedback_id = Number(req.body?.feedback_id);
