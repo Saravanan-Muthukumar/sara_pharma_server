@@ -863,12 +863,17 @@ app.get("/api/reports/staff-timeline", (req, res) => {
     return res.status(400).json({ message: "username is required" });
   }
 
-  const dateFilter =
-    from && to
-      ? `AND DATE(start_time) BETWEEN ? AND ?`
-      : ``;
+  let dateFilter = "";
+  let params = [username, username];
 
-  const params = from && to ? [username, username, from, to] : [username, username];
+  // ✅ DATE LOGIC
+  if (from && to) {
+    dateFilter = `AND DATE(start_time) BETWEEN ? AND ?`;
+    params.push(from, to);
+  } else {
+    // ✅ DEFAULT = TODAY
+    dateFilter = `AND DATE(start_time) = CURDATE()`;
+  }
 
   const sql = `
     SELECT
