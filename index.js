@@ -332,46 +332,39 @@ app.post("/api/packing/mark-packed", (req, res) => {
 // NOTE: invoice_date is optional now (since you said UI/report should not rely on it).
 app.post("/api/packing/create", (req, res) => {
   const invoice_number = clean(req.body.invoice_number);
-  const invoice_date = clean(req.body.invoice_date) || null; // optional
-  const no_of_products = req.body.no_of_products;
-  const invoice_value = req.body.invoice_value;
-  const customer_id = clean(req.body.customer_id);
-  const customer_name = clean(req.body.customer_name);
+  const invoice_date = clean(req.body.invoice_date) || null;
+  const no_of_products = Number(req.body.no_of_products);
+  const invoice_value =
+    req.body.invoice_value === "" || req.body.invoice_value === null || req.body.invoice_value === undefined
+      ? null
+      : Number(req.body.invoice_value);
+
+  const customer_id = Number(req.body.customer_id);
   const rep_name = clean(req.body.rep_name) || null;
   const courier_name = clean(req.body.courier_name);
   const created_by = clean(req.body.created_by) || null;
 
-  if (!invoice_number || !no_of_products || !customer_name || !courier_name) {
+  if (!invoice_number || !Number.isFinite(no_of_products) || no_of_products <= 0 || !Number.isFinite(customer_id) || customer_id <= 0 || !courier_name) {
     return res.status(400).json({
-      message: "invoice_number, no_of_products, customer_name, courier_name are required",
+      message: "invoice_number, no_of_products, customer_id, courier_name are required",
     });
   }
 
   const sql = `
     INSERT INTO packing
-      (invoice_number, invoice_date, no_of_products, invoice_value, customer_id,
-       customer_name, rep_name, courier_name,
+      (invoice_number, invoice_date, no_of_products, invoice_value,
+       customer_id, rep_name, courier_name,
        status, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
   `;
 
   db.query(
     sql,
-    [
-      invoice_number,
-      invoice_date,
-      Number(no_of_products),
-      invoice_value === "" || invoice_value === null || invoice_value === undefined ? null : Number(invoice_value),
-      customer_id,
-      customer_name,
-      rep_name,
-      courier_name,
-      created_by,
-    ],
+    [invoice_number, invoice_date, no_of_products, invoice_value, customer_id, rep_name, courier_name, created_by],
     (err, result) => {
       if (err) {
         if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "Invoice number already exists" });
-        return res.status(500).json(err);
+        return res.status(500).json({ message: "DB insert failed", code: err.code, sqlMessage: err.sqlMessage });
       }
       return res.status(200).json({ ok: true, invoice_id: result.insertId });
     }
