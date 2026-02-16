@@ -280,9 +280,17 @@ app.get("/api/packing/pack-info", (req, res) => {
 
   // 1) Find the clicked invoice (to get customer_id + invoice_number)
   const invoiceSql = `
-    SELECT invoice_id, invoice_number, customer_id, invoice_date, status
-    FROM packing
-    WHERE invoice_id = ?
+    SELECT 
+    p.invoice_id,
+    p.invoice_number,
+    p.customer_id,
+    p.invoice_date,
+    p.status,
+    c.customer_name,
+    c.courier_name
+  FROM packing p
+  LEFT JOIN customers c ON c.customer_id = p.customer_id
+  WHERE p.invoice_id = ?
   `;
 
   db.query(invoiceSql, [invoice_id], (e1, rows1) => {
@@ -336,6 +344,8 @@ app.get("/api/packing/pack-info", (req, res) => {
           invoice_id: inv.invoice_id,
           invoice_number: inv.invoice_number,
           customer_id,
+          customer_name: inv.customer_name ?? null,
+          courier_name: inv.courier_name ?? null,
 
           invoice_count,
           invoice_numbers,
