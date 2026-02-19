@@ -786,7 +786,8 @@ app.post("/api/feedbacklist", (req, res) => {
       f.follow_up,
       f.feedback_time,
       f.issue_resolved_time,
-      f.courier_date
+      f.courier_date,
+      f.weight
     FROM feedback f
     LEFT JOIN customers c
       ON c.customer_id = f.customer_id
