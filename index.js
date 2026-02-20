@@ -29,10 +29,6 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 const PORT = process.env.PORT || 8080;
 
-/* =========================
-   HELPERS
-========================= */
-
 const isBlank = (v) => v === undefined || v === null || String(v).trim() === "";
 const clean = (v) => (isBlank(v) ? "" : String(v).trim());
 
@@ -65,17 +61,10 @@ const getActiveCount = (username) =>
     });
   });
 
-/* =========================
-   BASIC ROUTES
-========================= */
-
 app.get("/", (req, res) => {
   res.send("Hello there! Api is working well");
 });
 
-/* =========================
-   AUTH
-========================= */
 
 app.post("/register", (req, res) => {
   const q = "SELECT * FROM users WHERE email = ? OR username = ?";
@@ -123,11 +112,6 @@ app.get("/api/getusers", (req, res) => {
   db.query("SELECT id, username, email, role FROM users", (error, result) => res.send(result));
 });
 
-/* =========================
-   PACKING API (UPDATED)
-   - show TO_TAKE and TO_VERIFY regardless of date
-   - report based on completion dates (take_completed_at / pack_completed_at)
-========================= */
 
 app.get("/api/invoices/today", (req, res) => {
   const sql = `
@@ -490,40 +474,6 @@ app.post("/api/packing/mark-packed-with-feedback", (req, res) => {
 });
 
 
-
-// ✅ Mark packed: VERIFYING -> PACKED
-// app.post("/api/packing/mark-packed", (req, res) => {
-//   const invoice_id = req.body.invoice_id;
-//   const username = clean(req.body.username);
-//   if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
-
-//   db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
-//     if (err) return res.status(500).json(err);
-//     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
-
-//     const row = rows[0];
-//     const st = (row.status);
-
-//     if (!canTransition(st, "PACKED"))
-//       return res.status(400).json({ message: `Invalid transition: ${row.status} -> PACKED` });
-
-//     if (clean(row.packed_by) !== username)
-//       return res.status(403).json({ message: "Only the staff who started verifying can mark packed." });
-
-//     db.query(
-//       "UPDATE packing SET status='PACKED', pack_completed_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
-//       [invoice_id],
-//       (e2) => {
-//         if (e2) return res.status(500).json(e2);
-//         return res.status(200).json({ ok: true });
-//       }
-//     );
-//   });
-// });
-
-// ✅ Start verify: TO_VERIFY -> VERIFYING
-// Fix for your error "Invalid transition: TAKEN -> VERIFYING":
-// - If your DB still contains TAKEN/Taken, normalizeStatus() maps it to TO_VERIFY, so it will now work.
 app.post("/api/packing/start-verify", async (req, res) => {
   const invoice_id = req.body.invoice_id;
   const username = clean(req.body.username);
@@ -560,8 +510,7 @@ app.post("/api/packing/start-verify", async (req, res) => {
   });
 });
 
-// ✅ Create invoice (Billing/Admin) -> status TO_TAKE
-// NOTE: invoice_date is optional now (since you said UI/report should not rely on it).
+
 app.post("/api/packing/create", (req, res) => {
   const invoice_number = clean(req.body.invoice_number);
   const invoice_date = clean(req.body.invoice_date) || null;
@@ -603,12 +552,108 @@ app.post("/api/packing/create", (req, res) => {
   );
 });
 
-/* =========================
-   REPORTS (FIXED)
-   Based on:
-   - take_completed_at + taken_by
-   - pack_completed_at + packed_by
-========================= */
+// ✅ Admin Edit - Get invoice by invoice_number
+app.get("/api/packing/edit/:invoice_number", (req, res) => {
+  const invoice_number = clean(req.params.invoice_number);
+
+  if (!invoice_number) {
+    return res.status(400).json({ message: "invoice_number required" });
+  }
+
+  const sql = `
+    SELECT
+      p.invoice_id,
+      p.invoice_number,
+      p.invoice_date,
+      p.no_of_products,
+      p.invoice_value,
+      p.customer_id,
+      p.status,
+      p.created_at,
+      p.updated_at,
+      p.taken_by,
+      p.packed_by,
+      p.take_started_at,
+      p.take_completed_at,
+      p.verify_started_at,
+      p.pack_completed_at,
+
+      c.customer_name,
+      c.city,
+      c.rep_name,
+      c.courier_name
+
+    FROM packing p
+    LEFT JOIN customers c
+      ON c.customer_id = p.customer_id
+
+    WHERE UPPER(TRIM(p.invoice_number)) = UPPER(TRIM(?))
+    LIMIT 1
+  `;
+
+  db.query(sql, [invoice_number], (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch invoice",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Invoice not found" });
+    }
+
+    return res.status(200).json(rows[0]);
+  });
+});
+
+// PUT /api/packing/edit/:invoice_id
+app.put("/api/packing/edit/:invoice_id", (req, res) => {
+  const invoice_id = Number(req.params.invoice_id);
+  if (!Number.isFinite(invoice_id) || invoice_id <= 0)
+    return res.status(400).json({ message: "invalid invoice_id" });
+
+  const invoice_number = clean(req.body.invoice_number)?.toUpperCase();
+  const invoice_date = clean(req.body.invoice_date) || null;
+  const no_of_products = Number(req.body.no_of_products);
+  const invoice_value =
+    req.body.invoice_value === "" || req.body.invoice_value == null
+      ? null
+      : Number(req.body.invoice_value);
+  const customer_id = Number(req.body.customer_id);
+
+  if (!invoice_number)
+    return res.status(400).json({ message: "invoice_number required" });
+  if (!Number.isInteger(no_of_products) || no_of_products <= 0)
+    return res.status(400).json({ message: "invalid no_of_products" });
+  if (invoice_value !== null && invoice_value < 0)
+    return res.status(400).json({ message: "invalid invoice_value" });
+  if (!Number.isFinite(customer_id) || customer_id <= 0)
+    return res.status(400).json({ message: "invalid customer_id" });
+
+  const sql = `
+    UPDATE packing
+    SET invoice_number=?, invoice_date=?, no_of_products=?,
+        invoice_value=?, customer_id=?, updated_at=NOW()
+    WHERE invoice_id=?`;
+
+  db.query(
+    sql,
+    [invoice_number, invoice_date, no_of_products, invoice_value, customer_id, invoice_id],
+    (err, result) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY")
+          return res.status(409).json({ message: "Invoice number already exists" });
+        return res.status(500).json({ message: "Update failed" });
+      }
+      if (!result.affectedRows)
+        return res.status(404).json({ message: "Invoice not found" });
+
+      return res.json({ ok: true, message: "Update successful" });
+    }
+  );
+});
 
 // ✅ Per-user totals for a day (default today)
 app.get("/api/reports/packing-daily", (req, res) => {
@@ -701,9 +746,6 @@ app.get("/api/reports/me/packing-daily", (req, res) => {
   });
 });
 
-/* =========================
-   CUSTOMERS (CRUD) + courier_name
-========================= */
 
 app.get("/api/customers", (req, res) => {
   const q = String(req.query.q || "").trim();
