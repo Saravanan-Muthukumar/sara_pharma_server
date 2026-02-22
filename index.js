@@ -342,6 +342,7 @@ app.get("/api/packing/pack-info", (req, res) => {
   });
 });
 
+//api in use 23 feb 26
 app.post("/api/packing/mark-packed-with-feedback", (req, res) => {
   const invoice_id = Number(req.body.invoice_id);
   const username = clean(req.body.username);
@@ -510,7 +511,7 @@ app.post("/api/packing/start-verify", async (req, res) => {
   });
 });
 
-
+// api in use (23 feb 26)
 app.post("/api/packing/create", (req, res) => {
   const invoice_number = clean(req.body.invoice_number);
   const invoice_date = clean(req.body.invoice_date) || null;
@@ -521,27 +522,26 @@ app.post("/api/packing/create", (req, res) => {
       : Number(req.body.invoice_value);
 
   const customer_id = Number(req.body.customer_id);
-  const rep_name = clean(req.body.rep_name) || null;
-  const courier_name = clean(req.body.courier_name);
+  // const rep_name = clean(req.body.rep_name) || null;
+  // const courier_name = clean(req.body.courier_name);
   const created_by = clean(req.body.created_by) || null;
 
-  if (!invoice_number || !Number.isFinite(no_of_products) || no_of_products <= 0 || !Number.isFinite(customer_id) || customer_id <= 0 || !courier_name) {
+  if (!invoice_number || !Number.isFinite(no_of_products) || no_of_products <= 0 || !Number.isFinite(customer_id) || customer_id <= 0 ) {
     return res.status(400).json({
-      message: "invoice_number, no_of_products, customer_id, courier_name are required",
+      message: "invoice_number, no_of_products, customer_name are required",
     });
   }
 
   const sql = `
     INSERT INTO packing
       (invoice_number, invoice_date, no_of_products, invoice_value,
-       customer_id, rep_name, courier_name,
-       status, created_by, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
+       customer_id, status, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, 'TO_TAKE', ?, NOW(), NOW())
   `;
 
   db.query(
     sql,
-    [invoice_number, invoice_date, no_of_products, invoice_value, customer_id, rep_name, courier_name, created_by],
+    [invoice_number, invoice_date, no_of_products, invoice_value, customer_id, created_by],
     (err, result) => {
       if (err) {
         if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ message: "Invoice number already exists" });
@@ -1070,10 +1070,12 @@ app.post("/api/feedback/update", (req, res) => {
   });
 });
 
+//api in use 23 feb 26
 app.get("/api/reports/staff-timeline", (req, res) => {
   const username = clean(req.query.username);
   const from = clean(req.query.from); // optional YYYY-MM-DD
   const to = clean(req.query.to);     // optional YYYY-MM-DD
+  console.log("time line api called")
 
   if (!username) {
     return res.status(400).json({ message: "username is required" });
@@ -1092,56 +1094,51 @@ app.get("/api/reports/staff-timeline", (req, res) => {
   }
 
   const sql = `
+  SELECT
+    start_time,
+    end_time,
+    action,
+    customer_name,
+    invoice_number,
+    no_of_products,
+    invoice_value,
+    CASE WHEN end_time IS NULL THEN 'IN_PROGRESS' ELSE 'COMPLETED' END AS status,
+    TIMESTAMPDIFF(MINUTE, start_time, COALESCE(end_time, NOW())) AS duration_minutes
+  FROM (
+    -- Stock Take
     SELECT
-      start_time,
-      end_time,
-      action,
-      customer_name,
-      invoice_number,
-      no_of_products,
-      invoice_value,
-      CASE
-        WHEN end_time IS NULL THEN 'IN_PROGRESS'
-        ELSE 'COMPLETED'
-      END AS status,
-      TIMESTAMPDIFF(
-        MINUTE,
-        start_time,
-        COALESCE(end_time, NOW())
-      ) AS duration_minutes
-    FROM (
-      -- Stock Take
-      SELECT
-        take_started_at AS start_time,
-        take_completed_at AS end_time,
-        'Take' AS action,
-        customer_name,
-        invoice_number,
-        no_of_products,
-        invoice_value
-      FROM packing
-      WHERE taken_by = ?
-        AND take_started_at IS NOT NULL
+      p.take_started_at AS start_time,
+      p.take_completed_at AS end_time,
+      'Take' AS action,
+      c.customer_name AS customer_name,
+      p.invoice_number,
+      p.no_of_products,
+      p.invoice_value
+    FROM packing p
+    LEFT JOIN customers c ON c.customer_id = p.customer_id
+    WHERE p.taken_by = ?
+      AND p.take_started_at IS NOT NULL
 
-      UNION ALL
+    UNION ALL
 
-      -- Stock Verify & Packed
-      SELECT
-        verify_started_at AS start_time,
-        pack_completed_at AS end_time,
-        'Verify' AS action,
-        customer_name,
-        invoice_number,
-        no_of_products,
-        invoice_value
-      FROM packing
-      WHERE packed_by = ?
-        AND verify_started_at IS NOT NULL
-    ) t
-    WHERE 1=1
-    ${dateFilter}
-    ORDER BY start_time DESC
-  `;
+    -- Stock Verify & Packed
+    SELECT
+      p.verify_started_at AS start_time,
+      p.pack_completed_at AS end_time,
+      'Verify' AS action,
+      c.customer_name AS customer_name,
+      p.invoice_number,
+      p.no_of_products,
+      p.invoice_value
+    FROM packing p
+    LEFT JOIN customers c ON c.customer_id = p.customer_id
+    WHERE p.packed_by = ?
+      AND p.verify_started_at IS NOT NULL
+  ) t
+  WHERE 1=1
+  ${dateFilter}
+  ORDER BY start_time DESC
+`;
 
   db.query(sql, params, (err, rows) => {
     if (err) {
@@ -1155,6 +1152,47 @@ app.get("/api/reports/staff-timeline", (req, res) => {
   });
 });
 
+//api in use 23 feb 26
+app.get("/api/packing/audit/:invoice_number", (req, res) => {
+  const invoice_number = clean(req.params.invoice_number).toUpperCase();
+  if (!invoice_number) return res.status(400).json({ message: "invoice_number required" });
+
+  const q1 = `
+    SELECT p.invoice_id,p.invoice_number,p.invoice_date,p.no_of_products,p.invoice_value,p.status,
+           p.take_started_at,p.take_completed_at,p.verify_started_at,p.pack_completed_at,
+           p.taken_by,p.packed_by, DATE(p.pack_completed_at) AS pack_date,
+           c.customer_id,c.customer_name,c.rep_name,c.courier_name
+    FROM packing p
+    LEFT JOIN customers c ON c.customer_id=p.customer_id
+    WHERE p.invoice_number=?
+    LIMIT 1
+  `;
+
+  db.query(q1, [invoice_number], (e1, r1) => {
+    if (e1) return res.status(500).json({ message: "DB error", e1 });
+    if (!r1?.length) return res.status(404).json({ message: "Invoice not found" });
+
+    const inv = r1[0];
+    const customer_id = Number(inv.customer_id || 0);
+    const packedDate = inv.pack_date;
+
+    if (!customer_id) return res.status(400).json({ message: "Invoice missing customer_id" });
+    if (!packedDate) return res.json({ invoice: inv, feedback: null });
+
+    const q2 = `
+      SELECT courier_date,no_of_box,weight,stock_received,stocks_ok,follow_up,feedback_time,issue_resolved_time
+      FROM feedback
+      WHERE customer_id=? AND DATE(pack_completed_at)=?
+      ORDER BY feedback_id DESC
+      LIMIT 1
+    `;
+
+    db.query(q2, [customer_id, packedDate], (e2, r2) => {
+      if (e2) return res.status(500).json({ message: "DB error", e2 });
+      return res.json({ invoice: inv, feedback: r2?.[0] || null });
+    });
+  });
+});
 
 // --- UPLOAD ---
 const storage = multer.diskStorage({
