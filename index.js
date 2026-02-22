@@ -940,6 +940,7 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
   });
 });
 
+//API IN USE ON 23 FEB 26
 app.get("/api/feedback/open", (req, res) => {
   const username = String(req.query.username || "").trim();
   if (!username) return res.status(400).json({ message: "username required" });
@@ -949,59 +950,43 @@ app.get("/api/feedback/open", (req, res) => {
 
   let sql = `
     SELECT
-      feedback_id,
-      courier_date,
-      invoice_date,
-      pack_completed_at,
-      courier_name,
-      customer_name,
-      rep_name,
-      invoice_count,
-      no_of_box,
-      stock_received,
-      stocks_ok,
-      follow_up,
-      feedback_time,
-      issue_resolved_time
-    FROM feedback
+      f.feedback_id,f.courier_date,f.invoice_date,f.pack_completed_at,
+      c.customer_name,c.courier_name,c.rep_name,
+      f.invoice_count,f.no_of_box,f.stock_received,f.stocks_ok,f.follow_up,f.feedback_time,f.issue_resolved_time
+    FROM feedback f
+    LEFT JOIN customers c ON c.customer_id = f.customer_id
     WHERE 1=1
   `;
-
   const params = [];
 
-  if (status === "resolved") sql += ` AND issue_resolved_time IS NOT NULL`;
-  else if (status !== "all") sql += ` AND issue_resolved_time IS NULL`;
+  if (status === "resolved") sql += ` AND f.issue_resolved_time IS NOT NULL`;
+  else if (status !== "all") sql += ` AND f.issue_resolved_time IS NULL`;
 
   if (!isAdmin) {
-    sql += ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`;
+    sql += ` AND TRIM(LOWER(c.rep_name)) = TRIM(LOWER(?))`;
     params.push(username);
   }
 
   if (customer) {
-    sql += ` AND LOWER(customer_name) LIKE ?`;
+    sql += ` AND LOWER(c.customer_name) LIKE ?`;
     params.push(`%${String(customer).toLowerCase()}%`);
   }
 
+  // feedback.invoice_date is varchar in your table → compare as string
   if (invoice_date) {
-    sql += ` AND DATE(invoice_date) = ?`;
+    sql += ` AND f.invoice_date = ?`;
     params.push(invoice_date);
   }
 
   if (courier_date) {
-    sql += ` AND DATE(courier_date) = ?`;
+    sql += ` AND DATE(f.courier_date) = ?`;
     params.push(courier_date);
   }
 
-  sql += ` ORDER BY courier_date ASC, customer_name ASC`;
+  sql += ` ORDER BY f.courier_date ASC, c.customer_name ASC`;
 
   db.query(sql, params, (err, rows) => {
-    if (err) {
-      return res.status(500).json({
-        message: "DB fetch failed",
-        code: err.code,
-        sqlMessage: err.sqlMessage,
-      });
-    }
+    if (err) return res.status(500).json({ message: "DB fetch failed", err });
     return res.json(Array.isArray(rows) ? rows : []);
   });
 });
