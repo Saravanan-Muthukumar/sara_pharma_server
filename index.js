@@ -881,6 +881,7 @@ app.post("/api/feedback/box", (req, res) => {
 });
 
 app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
+  console.log("API called")
   const { feedback_ids, courier_date } = req.body;
 
   if (!Array.isArray(feedback_ids) || feedback_ids.length === 0 || !courier_date) {
@@ -893,14 +894,14 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
   }
 
   const selectSql = `
-    SELECT feedback_id, customer_name, courier_name, pack_completed_at, no_of_box, courier_date
+    SELECT feedback_id, customer_id, pack_completed_at, no_of_box, courier_date
     FROM feedback
     WHERE feedback_id IN (?)
   `;
 
   db.query(selectSql, [ids], (err, rows) => {
-    if (err) return res.status(500).json({ message: "DB error", err });
-
+    if (err) return res.status(500).json({ message: "DBB error", code: err.code, sqlMessage: err.sqlMessage });
+    
     const list = Array.isArray(rows) ? rows : [];
 
     // Only validate rows that are still unconfirmed
@@ -910,8 +911,7 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
       .filter((r) => r.no_of_box == null || r.no_of_box === "")
       .map((r) => ({
         feedback_id: r.feedback_id,
-        customer_name: r.customer_name,
-        courier_name: r.courier_name,
+        customer_id: r.customer_id,
         packed_date: r.pack_completed_at ? String(r.pack_completed_at).slice(0, 10) : null,
       }));
 
@@ -930,7 +930,7 @@ app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
     `;
 
     db.query(updateSql, [courier_date, ids], (err2, result) => {
-      if (err2) return res.status(500).json({ message: "DB update failed", err: err2 });
+      if (err2) return res.status(500).json({ message: "DBB update failed", err: err2 });
 
       return res.json({
         message: "Courier confirmed",
