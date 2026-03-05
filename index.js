@@ -61,6 +61,17 @@ const getActiveCount = (username) =>
     });
   });
 
+const getToVerifyCount = () =>
+  new Promise((resolve, reject) => {
+    db.query(
+      "SELECT COUNT(*) AS c FROM packing WHERE status = 'TO_VERIFY'",
+      (err, rows) => {
+        if (err) return reject(err);
+        resolve(Number(rows?.[0]?.c || 0));
+      }
+    );
+  });
+
 app.get("/", (req, res) => {
   res.send("Hello there! Api is working well");
 });
@@ -194,14 +205,57 @@ app.get("/api/me/bills-to-verify", (req, res) => {
 });
 
 // ✅ Start taking: TO_TAKE -> TAKING
+// app.post("/api/packing/start-taking", async (req, res) => {
+//   const invoice_id = req.body.invoice_id;
+//   const username = clean(req.body.username);
+//   if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+
+//   try {
+//     const active = await getActiveCount(username);
+//     if (active >= 2) return res.status(403).json({ message: "You can work only 2 invoices at a time." });
+//   } catch (e) {
+//     return res.status(500).json(e);
+//   }
+
+//   db.query("SELECT * FROM packing WHERE invoice_id = ?", [invoice_id], (err, rows) => {
+//     if (err) return res.status(500).json(err);
+//     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
+
+//     const row = rows[0];
+//     const st = (row.status);
+
+//     if (st !== "TO_TAKE") return res.status(400).json({ message: `Invalid status: ${row.status}` });
+
+//     db.query(
+//       "UPDATE packing SET status='TAKING', taken_by=?, take_started_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
+//       [username, invoice_id],
+//       (e2) => {
+//         if (e2) return res.status(500).json(e2);
+//         return res.status(200).json({ ok: true });
+//       }
+//     );
+//   });
+// });
+
 app.post("/api/packing/start-taking", async (req, res) => {
   const invoice_id = req.body.invoice_id;
   const username = clean(req.body.username);
-  if (!invoice_id || !username) return res.status(400).json({ message: "invoice_id and username required" });
+  if (!invoice_id || !username)
+    return res.status(400).json({ message: "invoice_id and username required" });
 
   try {
+    // ✅ NEW RULE: if TO_VERIFY backlog > 2, block start taking
+    const toVerifyCount = await getToVerifyCount();
+    if (toVerifyCount > 1) {
+      return res.status(403).json({
+        message: "2 bills waiting for verification. Please verify first.",
+        to_verify_count: toVerifyCount,
+      });
+    }
+    // existing rule: user can work max 2 invoices
     const active = await getActiveCount(username);
-    if (active >= 2) return res.status(403).json({ message: "You can work only 2 invoices at a time." });
+    if (active >= 2)
+      return res.status(403).json({ message: "You can work only 2 invoices at a time." });
   } catch (e) {
     return res.status(500).json(e);
   }
@@ -211,9 +265,10 @@ app.post("/api/packing/start-taking", async (req, res) => {
     if (!rows?.length) return res.status(404).json({ message: "Invoice not found" });
 
     const row = rows[0];
-    const st = (row.status);
+    const st = row.status;
 
-    if (st !== "TO_TAKE") return res.status(400).json({ message: `Invalid status: ${row.status}` });
+    if (st !== "TO_TAKE")
+      return res.status(400).json({ message: `Invalid status: ${row.status}` });
 
     db.query(
       "UPDATE packing SET status='TAKING', taken_by=?, take_started_at=NOW(), updated_at=NOW() WHERE invoice_id=?",
@@ -881,7 +936,6 @@ app.post("/api/feedback/box", (req, res) => {
 });
 
 app.post("/api/feedback/confirm-courier-bulk", (req, res) => {
-  console.log("API called")
   const { feedback_ids, courier_date } = req.body;
 
   if (!Array.isArray(feedback_ids) || feedback_ids.length === 0 || !courier_date) {
@@ -1060,8 +1114,6 @@ app.get("/api/reports/staff-timeline", (req, res) => {
   const username = clean(req.query.username);
   const from = clean(req.query.from); // optional YYYY-MM-DD
   const to = clean(req.query.to);     // optional YYYY-MM-DD
-  console.log("time line api called")
-
   if (!username) {
     return res.status(400).json({ message: "username is required" });
   }
