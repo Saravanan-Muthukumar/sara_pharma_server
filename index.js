@@ -862,6 +862,171 @@ app.delete("/api/customers/:id", (req, res) => {
   });
 });
 
+// --- SUPPLIERS ---
+app.get("/api/suppliers", (req, res) => {
+  const q = String(req.query.q || "").trim();
+
+  let sql = `
+    SELECT supplier_id, supplier_name, city, created_at, updated_at
+    FROM suppliers
+  `;
+  const params = [];
+
+  if (q) {
+    sql += ` WHERE supplier_name LIKE ? OR city LIKE ?`;
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
+  sql += ` ORDER BY supplier_name ASC`;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch suppliers",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+    return res.status(200).json(rows || []);
+  });
+});
+
+app.post("/api/suppliers", (req, res) => {
+  const supplier_name = String(req.body.supplier_name || "").trim();
+  const city = String(req.body.city || "").trim() || null;
+
+  if (!supplier_name) {
+    return res.status(400).json({ message: "supplier_name is required" });
+  }
+
+  const checkSql = `SELECT supplier_id FROM suppliers WHERE UPPER(TRIM(supplier_name)) = UPPER(TRIM(?)) LIMIT 1`;
+
+  db.query(checkSql, [supplier_name], (checkErr, checkRows) => {
+    if (checkErr) {
+      return res.status(500).json({
+        message: "Failed to validate supplier",
+        code: checkErr.code,
+        sqlMessage: checkErr.sqlMessage,
+      });
+    }
+
+    if (checkRows && checkRows.length > 0) {
+      return res.status(409).json({ message: "Supplier already exists" });
+    }
+
+    const insertSql = `
+      INSERT INTO suppliers (supplier_name, city)
+      VALUES (?, ?)
+    `;
+
+    db.query(insertSql, [supplier_name, city], (err, result) => {
+      if (err) {
+        return res.status(500).json({
+          message: "Failed to add supplier",
+          code: err.code,
+          sqlMessage: err.sqlMessage,
+        });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        message: "Supplier added successfully",
+        supplier_id: result.insertId,
+      });
+    });
+  });
+});
+
+app.put("/api/suppliers/:id", (req, res) => {
+  const supplier_id = Number(req.params.id);
+  const supplier_name = String(req.body.supplier_name || "").trim();
+  const city = String(req.body.city || "").trim() || null;
+
+  if (!Number.isFinite(supplier_id) || supplier_id <= 0) {
+    return res.status(400).json({ message: "Invalid supplier_id" });
+  }
+
+  if (!supplier_name) {
+    return res.status(400).json({ message: "supplier_name is required" });
+  }
+
+  const checkSql = `
+    SELECT supplier_id
+    FROM suppliers
+    WHERE UPPER(TRIM(supplier_name)) = UPPER(TRIM(?))
+      AND supplier_id <> ?
+    LIMIT 1
+  `;
+
+  db.query(checkSql, [supplier_name, supplier_id], (checkErr, checkRows) => {
+    if (checkErr) {
+      return res.status(500).json({
+        message: "Failed to validate supplier",
+        code: checkErr.code,
+        sqlMessage: checkErr.sqlMessage,
+      });
+    }
+
+    if (checkRows && checkRows.length > 0) {
+      return res.status(409).json({ message: "Supplier name already exists" });
+    }
+
+    const updateSql = `
+      UPDATE suppliers
+      SET supplier_name = ?, city = ?, updated_at = NOW()
+      WHERE supplier_id = ?
+    `;
+
+    db.query(updateSql, [supplier_name, city, supplier_id], (err, result) => {
+      if (err) {
+        return res.status(500).json({
+          message: "Failed to update supplier",
+          code: err.code,
+          sqlMessage: err.sqlMessage,
+        });
+      }
+
+      if (!result.affectedRows) {
+        return res.status(404).json({ message: "Supplier not found" });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        message: "Supplier updated successfully",
+      });
+    });
+  });
+});
+
+app.delete("/api/suppliers/:id", (req, res) => {
+  const supplier_id = Number(req.params.id);
+
+  if (!Number.isFinite(supplier_id) || supplier_id <= 0) {
+    return res.status(400).json({ message: "Invalid supplier_id" });
+  }
+
+  const deleteSql = `DELETE FROM suppliers WHERE supplier_id = ?`;
+
+  db.query(deleteSql, [supplier_id], (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to delete supplier",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "Supplier not found" });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Supplier deleted successfully",
+    });
+  });
+});
+
 app.post("/api/feedbacklist", (req, res) => {
   const sql = `
     SELECT
@@ -1228,6 +1393,540 @@ app.get("/api/packing/audit/:invoice_number", (req, res) => {
       if (e2) return res.status(500).json({ message: "DB error", e2 });
       return res.json({ invoice: inv, feedback: r2?.[0] || null });
     });
+  });
+});
+
+app.get("/api/purchase-issues", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const status = String(req.query.status || "").trim();
+  const supplier_id = Number(req.query.supplier_id);
+
+  let sql = `
+    SELECT
+      pi.issue_id,
+      pi.purchase_number,
+      pi.supplier_id,
+      s.supplier_name,
+      s.city,
+      pi.invoice_number,
+      pi.invoice_date,
+      pi.product_name,
+      pi.issue_type,
+      pi.quantity,
+      pi.status,
+      pi.purchase_verified_by,
+      pi.verified_by,
+      pi.informed_to,
+      pi.informed_at,
+      pi.notes,
+      pi.recorded_by,
+      pi.recorded_at,
+      pi.last_updated
+    FROM purchase_issues pi
+    LEFT JOIN suppliers s
+      ON s.supplier_id = pi.supplier_id
+    WHERE 1 = 1
+  `;
+
+  const params = [];
+
+  if (q) {
+    sql += `
+      AND (
+        pi.purchase_number LIKE ?
+        OR pi.invoice_number LIKE ?
+        OR pi.product_name LIKE ?
+        OR s.supplier_name LIKE ?
+      )
+    `;
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  if (status) {
+    sql += ` AND pi.status = ? `;
+    params.push(status);
+  }
+
+  if (Number.isFinite(supplier_id) && supplier_id > 0) {
+    sql += ` AND pi.supplier_id = ? `;
+    params.push(supplier_id);
+  }
+
+  sql += ` ORDER BY pi.issue_id DESC `;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch purchase issues",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    return res.status(200).json(rows || []);
+  });
+});
+
+app.get("/api/purchase-issues/:id", (req, res) => {
+  const issue_id = Number(req.params.id);
+
+  if (!Number.isFinite(issue_id) || issue_id <= 0) {
+    return res.status(400).json({ message: "Invalid issue_id" });
+  }
+
+  const sql = `
+    SELECT
+      pi.issue_id,
+      pi.purchase_number,
+      pi.supplier_id,
+      s.supplier_name,
+      s.city,
+      pi.invoice_number,
+      pi.invoice_date,
+      pi.product_name,
+      pi.issue_type,
+      pi.quantity,
+      pi.status,
+      pi.purchase_verified_by,
+      pi.verified_by,
+      pi.informed_to,
+      pi.informed_at,
+      pi.notes,
+      pi.recorded_by,
+      pi.recorded_at,
+      pi.last_updated
+    FROM purchase_issues pi
+    LEFT JOIN suppliers s
+      ON s.supplier_id = pi.supplier_id
+    WHERE pi.issue_id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [issue_id], (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch purchase issue",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Purchase issue not found" });
+    }
+
+    return res.status(200).json(rows[0]);
+  });
+});
+
+app.post("/api/purchase-issues", (req, res) => {
+  const purchase_number = String(req.body.purchase_number || "").trim();
+  const supplier_id = Number(req.body.supplier_id);
+  const invoice_number = String(req.body.invoice_number || "").trim() || null;
+  const invoice_date = String(req.body.invoice_date || "").trim() || null;
+  const product_name = String(req.body.product_name || "").trim() || null;
+  const issue_type = String(req.body.issue_type || "").trim();
+  const quantity = req.body.quantity === "" || req.body.quantity == null ? 0 : Number(req.body.quantity);
+  const status = String(req.body.status || "").trim() || "OPEN";
+  const purchase_verified_by = String(req.body.purchase_verified_by || "").trim() || null;
+  const verified_by = String(req.body.verified_by || "").trim() || null;
+  const informed_to = String(req.body.informed_to || "").trim() || null;
+  const informed_at = String(req.body.informed_at || "").trim() || null;
+  const notes = String(req.body.notes || "").trim() || null;
+  const recorded_by = String(req.body.recorded_by || "").trim() || null;
+
+  if (!purchase_number) {
+    return res.status(400).json({ message: "purchase_number is required" });
+  }
+
+  if (!Number.isFinite(supplier_id) || supplier_id <= 0) {
+    return res.status(400).json({ message: "Valid supplier_id is required" });
+  }
+
+  if (!issue_type) {
+    return res.status(400).json({ message: "issue_type is required" });
+  }
+
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    return res.status(400).json({ message: "quantity must be a non-negative number" });
+  }
+
+  const sql = `
+    INSERT INTO purchase_issues (
+      purchase_number,
+      supplier_id,
+      invoice_number,
+      invoice_date,
+      product_name,
+      issue_type,
+      quantity,
+      status,
+      purchase_verified_by,
+      verified_by,
+      informed_to,
+      informed_at,
+      notes,
+      recorded_by,
+      recorded_at,
+      last_updated
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+  `;
+
+  const params = [
+    purchase_number,
+    supplier_id,
+    invoice_number,
+    invoice_date,
+    product_name,
+    issue_type,
+    quantity,
+    status,
+    purchase_verified_by,
+    verified_by,
+    informed_to,
+    informed_at,
+    notes,
+    recorded_by,
+  ];
+
+  db.query(sql, params, (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to add purchase issue",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Purchase issue added successfully",
+      issue_id: result.insertId,
+    });
+  });
+});
+
+app.put("/api/purchase-issues/:id", (req, res) => {
+  const issue_id = Number(req.params.id);
+
+  if (!Number.isFinite(issue_id) || issue_id <= 0) {
+    return res.status(400).json({ message: "Invalid issue_id" });
+  }
+
+  const purchase_number = String(req.body.purchase_number || "").trim();
+  const supplier_id = Number(req.body.supplier_id);
+  const invoice_number = String(req.body.invoice_number || "").trim() || null;
+  const invoice_date = String(req.body.invoice_date || "").trim() || null;
+  const product_name = String(req.body.product_name || "").trim() || null;
+  const issue_type = String(req.body.issue_type || "").trim();
+  const quantity = req.body.quantity === "" || req.body.quantity == null ? 0 : Number(req.body.quantity);
+  const status = String(req.body.status || "").trim() || "OPEN";
+  const purchase_verified_by = String(req.body.purchase_verified_by || "").trim() || null;
+  const verified_by = String(req.body.verified_by || "").trim() || null;
+  const informed_to = String(req.body.informed_to || "").trim() || null;
+  const informed_at = String(req.body.informed_at || "").trim() || null;
+  const notes = String(req.body.notes || "").trim() || null;
+
+  if (!purchase_number) {
+    return res.status(400).json({ message: "purchase_number is required" });
+  }
+
+  if (!Number.isFinite(supplier_id) || supplier_id <= 0) {
+    return res.status(400).json({ message: "Valid supplier_id is required" });
+  }
+
+  if (!issue_type) {
+    return res.status(400).json({ message: "issue_type is required" });
+  }
+
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    return res.status(400).json({ message: "quantity must be a non-negative number" });
+  }
+
+  const sql = `
+    UPDATE purchase_issues
+    SET
+      purchase_number = ?,
+      supplier_id = ?,
+      invoice_number = ?,
+      invoice_date = ?,
+      product_name = ?,
+      issue_type = ?,
+      quantity = ?,
+      status = ?,
+      purchase_verified_by = ?,
+      verified_by = ?,
+      informed_to = ?,
+      informed_at = ?,
+      notes = ?,
+      last_updated = NOW()
+    WHERE issue_id = ?
+  `;
+
+  const params = [
+    purchase_number,
+    supplier_id,
+    invoice_number,
+    invoice_date,
+    product_name,
+    issue_type,
+    quantity,
+    status,
+    purchase_verified_by,
+    verified_by,
+    informed_to,
+    informed_at,
+    notes,
+    issue_id,
+  ];
+
+  db.query(sql, params, (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to update purchase issue",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "Purchase issue not found" });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Purchase issue updated successfully",
+    });
+  });
+});
+
+app.delete("/api/purchase-issues/:id", (req, res) => {
+  const issue_id = Number(req.params.id);
+
+  if (!Number.isFinite(issue_id) || issue_id <= 0) {
+    return res.status(400).json({ message: "Invalid issue_id" });
+  }
+
+  const sql = `DELETE FROM purchase_issues WHERE issue_id = ?`;
+
+  db.query(sql, [issue_id], (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to delete purchase issue",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "Purchase issue not found" });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Purchase issue deleted successfully",
+    });
+  });
+});
+
+app.get("/api/purchase-issue-followups/:issue_id", (req, res) => {
+  const issue_id = Number(req.params.issue_id);
+
+  if (!Number.isFinite(issue_id) || issue_id <= 0) {
+    return res.status(400).json({ message: "Invalid issue_id" });
+  }
+
+  const sql = `
+    SELECT
+      followup_id,
+      issue_id,
+      note,
+      updated_by,
+      updated_at
+    FROM purchase_issue_followups
+    WHERE issue_id = ?
+    ORDER BY updated_at DESC, followup_id DESC
+  `;
+
+  db.query(sql, [issue_id], (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch followups",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    return res.status(200).json(rows || []);
+  });
+});
+
+app.post("/api/purchase-issue-followups", (req, res) => {
+  const issue_id = Number(req.body.issue_id);
+  const note = String(req.body.note || "").trim();
+  const updated_by = String(req.body.updated_by || "").trim() || null;
+
+  if (!Number.isFinite(issue_id) || issue_id <= 0) {
+    return res.status(400).json({ message: "Valid issue_id is required" });
+  }
+
+  if (!note) {
+    return res.status(400).json({ message: "note is required" });
+  }
+
+  const checkSql = `
+    SELECT issue_id
+    FROM purchase_issues
+    WHERE issue_id = ?
+    LIMIT 1
+  `;
+
+  db.query(checkSql, [issue_id], (checkErr, checkRows) => {
+    if (checkErr) {
+      return res.status(500).json({
+        message: "Failed to validate issue",
+        code: checkErr.code,
+        sqlMessage: checkErr.sqlMessage,
+      });
+    }
+
+    if (!checkRows || checkRows.length === 0) {
+      return res.status(404).json({ message: "Purchase issue not found" });
+    }
+
+    const insertSql = `
+      INSERT INTO purchase_issue_followups (
+        issue_id,
+        note,
+        updated_by,
+        updated_at
+      )
+      VALUES (?, ?, ?, NOW())
+    `;
+
+    db.query(insertSql, [issue_id, note, updated_by], (err, result) => {
+      if (err) {
+        return res.status(500).json({
+          message: "Failed to add followup",
+          code: err.code,
+          sqlMessage: err.sqlMessage,
+        });
+      }
+
+      return res.status(200).json({
+        ok: true,
+        message: "Followup added successfully",
+        followup_id: result.insertId,
+      });
+    });
+  });
+});
+
+app.put("/api/purchase-issue-followups/:id", (req, res) => {
+  const followup_id = Number(req.params.id);
+  const note = String(req.body.note || "").trim();
+  const updated_by = String(req.body.updated_by || "").trim() || null;
+
+  if (!Number.isFinite(followup_id) || followup_id <= 0) {
+    return res.status(400).json({ message: "Invalid followup_id" });
+  }
+
+  if (!note) {
+    return res.status(400).json({ message: "note is required" });
+  }
+
+  const sql = `
+    UPDATE purchase_issue_followups
+    SET
+      note = ?,
+      updated_by = ?,
+      updated_at = NOW()
+    WHERE followup_id = ?
+  `;
+
+  db.query(sql, [note, updated_by, followup_id], (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to update followup",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "Followup not found" });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Followup updated successfully",
+    });
+  });
+});
+
+app.delete("/api/purchase-issue-followups/:id", (req, res) => {
+  const followup_id = Number(req.params.id);
+
+  if (!Number.isFinite(followup_id) || followup_id <= 0) {
+    return res.status(400).json({ message: "Invalid followup_id" });
+  }
+
+  const sql = `DELETE FROM purchase_issue_followups WHERE followup_id = ?`;
+
+  db.query(sql, [followup_id], (err, result) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to delete followup",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!result.affectedRows) {
+      return res.status(404).json({ message: "Followup not found" });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      message: "Followup deleted successfully",
+    });
+  });
+});
+
+app.get("/api/purchase-issue-followups/detail/:id", (req, res) => {
+  const followup_id = Number(req.params.id);
+
+  if (!Number.isFinite(followup_id) || followup_id <= 0) {
+    return res.status(400).json({ message: "Invalid followup_id" });
+  }
+
+  const sql = `
+    SELECT
+      followup_id,
+      issue_id,
+      note,
+      updated_by,
+      updated_at
+    FROM purchase_issue_followups
+    WHERE followup_id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [followup_id], (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch followup",
+        code: err.code,
+        sqlMessage: err.sqlMessage,
+      });
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ message: "Followup not found" });
+    }
+
+    return res.status(200).json(rows[0]);
   });
 });
 
