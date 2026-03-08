@@ -1930,6 +1930,269 @@ app.get("/api/purchase-issue-followups/detail/:id", (req, res) => {
   });
 });
 
+app.get("/api/purchase-returns", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const status = String(req.query.status || "").trim();
+  const supplier_id = Number(req.query.supplier_id);
+
+  let sql = `
+    SELECT
+      pr.purchase_return_id,
+      pr.purchase_return_no,
+      pr.purchase_return_date,
+      pr.supplier_id,
+      s.supplier_name,
+      s.city,
+      pr.purchase_return_amount,
+      pr.supplier_sales_return_no,
+      pr.supplier_sales_return_amount,
+      pr.supplier_sales_return_date,
+      pr.courier_name,
+      pr.tracking_number,
+      pr.recorded_by,
+      pr.recorded_date,
+      pr.status,
+      pr.remarks
+    FROM purchase_returns pr
+    LEFT JOIN suppliers s
+      ON s.supplier_id = pr.supplier_id
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  if (q) {
+    sql += `
+      AND (
+        pr.purchase_return_no LIKE ?
+        OR pr.supplier_sales_return_no LIKE ?
+        OR s.supplier_name LIKE ?
+        OR pr.courier_name LIKE ?
+        OR pr.tracking_number LIKE ?
+      )
+    `;
+    params.push(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`);
+  }
+
+  if (status) {
+    sql += ` AND pr.status=? `;
+    params.push(status);
+  }
+
+  if (Number.isFinite(supplier_id) && supplier_id > 0) {
+    sql += ` AND pr.supplier_id=? `;
+    params.push(supplier_id);
+  }
+
+  sql += ` ORDER BY pr.purchase_return_id DESC`;
+
+  db.query(sql, params, (err, rows) => {
+    if (err) {
+      return res.status(500).json({
+        message: "Failed to fetch purchase returns",
+        code: err.code,
+        sqlMessage: err.sqlMessage
+      });
+    }
+
+    res.json(rows || []);
+  });
+});
+
+app.get("/api/purchase-returns/:id", (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isFinite(id) || id <= 0)
+    return res.status(400).json({ message: "Invalid purchase_return_id" });
+
+  const sql = `
+    SELECT
+      pr.purchase_return_id,
+      pr.purchase_return_no,
+      pr.purchase_return_date,
+      pr.supplier_id,
+      s.supplier_name,
+      s.city,
+      pr.purchase_return_amount,
+      pr.supplier_sales_return_no,
+      pr.supplier_sales_return_amount,
+      pr.supplier_sales_return_date,
+      pr.courier_name,
+      pr.tracking_number,
+      pr.recorded_by,
+      pr.recorded_date,
+      pr.status,
+      pr.remarks
+    FROM purchase_returns pr
+    LEFT JOIN suppliers s
+      ON s.supplier_id = pr.supplier_id
+    WHERE pr.purchase_return_id=?
+  `;
+
+  db.query(sql,[id],(err,rows)=>{
+    if(err) return res.status(500).json(err);
+
+    if(!rows.length)
+      return res.status(404).json({message:"Purchase return not found"});
+
+    res.json(rows[0]);
+  });
+});
+
+app.post("/api/purchase-returns", (req,res)=>{
+
+  const purchase_return_no = String(req.body.purchase_return_no || "").trim();
+  const purchase_return_date = req.body.purchase_return_date || null;
+  const supplier_id = Number(req.body.supplier_id);
+
+  const purchase_return_amount = Number(req.body.purchase_return_amount);
+
+  const supplier_sales_return_no = req.body.supplier_sales_return_no || null;
+  const supplier_sales_return_amount = req.body.supplier_sales_return_amount || null;
+  const supplier_sales_return_date = req.body.supplier_sales_return_date || null;
+
+  const courier_name = req.body.courier_name || null;
+  const tracking_number = req.body.tracking_number || null;
+
+  const recorded_by = req.body.recorded_by || null;
+  const status = req.body.status || "STOCK_SENT_IN_COURIER";
+  const remarks = req.body.remarks || null;
+
+  if(!purchase_return_no)
+    return res.status(400).json({message:"purchase_return_no required"});
+
+  if(!supplier_id)
+    return res.status(400).json({message:"supplier_id required"});
+
+  const sql = `
+    INSERT INTO purchase_returns(
+      purchase_return_no,
+      purchase_return_date,
+      supplier_id,
+      purchase_return_amount,
+      supplier_sales_return_no,
+      supplier_sales_return_amount,
+      supplier_sales_return_date,
+      courier_name,
+      tracking_number,
+      recorded_by,
+      recorded_date,
+      status,
+      remarks
+    )
+    VALUES(?,?,?,?,?,?,?,?,?,?,NOW(),?,?)
+  `;
+
+  db.query(sql,[
+    purchase_return_no,
+    purchase_return_date,
+    supplier_id,
+    purchase_return_amount,
+    supplier_sales_return_no,
+    supplier_sales_return_amount,
+    supplier_sales_return_date,
+    courier_name,
+    tracking_number,
+    recorded_by,
+    status,
+    remarks
+  ],(err,result)=>{
+      if(err) return res.status(500).json(err);
+
+      res.json({
+        ok:true,
+        purchase_return_id:result.insertId
+      });
+  });
+
+});
+
+app.put("/api/purchase-returns/:id",(req,res)=>{
+
+  const id = Number(req.params.id);
+
+  const purchase_return_no = req.body.purchase_return_no;
+  const purchase_return_date = req.body.purchase_return_date;
+  const supplier_id = req.body.supplier_id;
+
+  const purchase_return_amount = req.body.purchase_return_amount;
+
+  const supplier_sales_return_no = req.body.supplier_sales_return_no;
+  const supplier_sales_return_amount = req.body.supplier_sales_return_amount;
+  const supplier_sales_return_date = req.body.supplier_sales_return_date;
+
+  const courier_name = req.body.courier_name;
+  const tracking_number = req.body.tracking_number;
+
+  const recorded_by = req.body.recorded_by;
+  const status = req.body.status;
+  const remarks = req.body.remarks;
+
+  const sql = `
+    UPDATE purchase_returns
+    SET
+      purchase_return_no=?,
+      purchase_return_date=?,
+      supplier_id=?,
+      purchase_return_amount=?,
+      supplier_sales_return_no=?,
+      supplier_sales_return_amount=?,
+      supplier_sales_return_date=?,
+      courier_name=?,
+      tracking_number=?,
+      recorded_by=?,
+      status=?,
+      remarks=?
+    WHERE purchase_return_id=?
+  `;
+
+  db.query(sql,[
+    purchase_return_no,
+    purchase_return_date,
+    supplier_id,
+    purchase_return_amount,
+    supplier_sales_return_no,
+    supplier_sales_return_amount,
+    supplier_sales_return_date,
+    courier_name,
+    tracking_number,
+    recorded_by,
+    status,
+    remarks,
+    id
+  ],(err,result)=>{
+
+    if(err) return res.status(500).json(err);
+
+    if(!result.affectedRows)
+      return res.status(404).json({message:"Not found"});
+
+    res.json({ok:true});
+  });
+
+});
+
+app.delete("/api/purchase-returns/:id",(req,res)=>{
+
+  const id = Number(req.params.id);
+
+  db.query(
+    "DELETE FROM purchase_returns WHERE purchase_return_id=?",
+    [id],
+    (err,result)=>{
+
+      if(err) return res.status(500).json(err);
+
+      if(!result.affectedRows)
+        return res.status(404).json({message:"Not found"});
+
+      res.json({ok:true});
+    }
+  );
+
+});
+
+
 // --- UPLOAD ---
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
