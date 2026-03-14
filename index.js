@@ -1211,37 +1211,29 @@ app.get("/api/feedback/open", (req, res) => {
 });
 
 app.post("/api/feedback/update", (req, res) => {
-  const username = String(req.body.username || "").trim();
-  if (!username) return res.status(400).json({ message: "username required" });
-
-  const isAdmin = username.toLowerCase() === "admin";
   const { feedback_id, stock_received, stocks_ok, follow_up } = req.body;
 
-  if (!feedback_id) return res.status(400).json({ message: "feedback_id is required" });
+  if (!feedback_id) {
+    return res.status(400).json({ message: "feedback_id is required" });
+  }
 
   const srVal =
-    stock_received === 1 || stock_received === "1" || stock_received === true
+    [1, "1", true].includes(stock_received)
       ? 1
-      : stock_received === 0 || stock_received === "0" || stock_received === false
+      : [0, "0", false].includes(stock_received)
       ? 0
       : null;
 
   const okVal =
-    stocks_ok === 1 || stocks_ok === "1" || stocks_ok === true
+    [1, "1", true].includes(stocks_ok)
       ? 1
-      : stocks_ok === 0 || stocks_ok === "0" || stocks_ok === false
+      : [0, "0", false].includes(stocks_ok)
       ? 0
       : null;
 
   const finalOk = srVal === 0 ? null : okVal;
-
-  let followUpText = follow_up ?? null;
   const shouldClose = srVal === 1 && finalOk === 1;
-  if (shouldClose) followUpText = "NOT REQUIRED";
-
-  const guardSql = !isAdmin
-    ? ` AND TRIM(LOWER(rep_name)) = TRIM(LOWER(?))`
-    : ``;
+  const followUpText = shouldClose ? "NOT REQUIRED" : (follow_up ?? null);
 
   const updateSql = `
     UPDATE feedback
@@ -1252,14 +1244,9 @@ app.post("/api/feedback/update", (req, res) => {
       feedback_time = NOW()
       ${shouldClose ? ", issue_resolved_time = NOW()" : ""}
     WHERE feedback_id = ?
-    ${guardSql}
   `;
 
-  const params = !isAdmin
-    ? [srVal, finalOk, followUpText, feedback_id, username]
-    : [srVal, finalOk, followUpText, feedback_id];
-
-  db.query(updateSql, params, (err, result) => {
+  db.query(updateSql, [srVal, finalOk, followUpText, feedback_id], (err, result) => {
     if (err) {
       return res.status(500).json({
         message: "DB update failed",
@@ -1267,10 +1254,14 @@ app.post("/api/feedback/update", (req, res) => {
         sqlMessage: err.sqlMessage,
       });
     }
-    if ((result?.affectedRows || 0) === 0) {
-      return res.status(404).json({ message: "Not found or not allowed" });
+
+    if (!result || result.affectedRows === 0) {
+      return res.status(404).json({ message: "Feedback not found" });
     }
-    return res.json({ message: shouldClose ? "Saved & Resolved" : "Saved" });
+
+    return res.json({
+      message: shouldClose ? "Saved & Resolved" : "Saved",
+    });
   });
 });
 
